@@ -8,6 +8,8 @@ import {
   Box,
   Button,
 } from "@mui/material";
+import axios from "axios";
+import { jwtDecode } from "jwt-decode";
 // import "./DoctorDashboard.css"; // Commented out as styles are now in DashboardLayout.css
 
 function DoctorDashboard() {
@@ -40,6 +42,7 @@ function DoctorDashboard() {
   const [patientPaymentStatus, setPatientPaymentStatus] = useState(null);
   const [showBillingSlip, setShowBillingSlip] = useState(false);
   const [showMedicalAbstract, setShowMedicalAbstract] = useState(false);
+  const [medicalAbstractData, setMedicalAbstractData] = useState(null);
   const [showVisitHistory, setShowVisitHistory] = useState(false);
   const [showEditVisitForm, setShowEditVisitForm] = useState(false);
   const [editingVisit, setEditingVisit] = useState(null);
@@ -50,6 +53,7 @@ function DoctorDashboard() {
     treatments: [],
     diagnoses: [],
   });
+  const [billingSlipData, setBillingSlipData] = useState(null);
   const navigate = useNavigate();
 
   const API_BASE_URL = "http://localhost:5000/api";
@@ -168,7 +172,6 @@ function DoctorDashboard() {
     setActiveView(view);
     setSearchTerm("");
     setPatients([]);
-    setAllPatients([]);
     setShowBillingSlip(false);
     setShowMedicalAbstract(false);
     setShowVisitHistory(false);
@@ -181,16 +184,17 @@ function DoctorDashboard() {
       treatment_description: "",
     });
     setNewDiagnosis("");
+    setBillingSlipData(null);
 
     console.log("Navigated to:", view, "Selected Visit ID:", currentVisitId);
   };
 
-  const handleSearchChange = (e) => {
-    setSearchTerm(e.target.value);
+  const handleSearchChange = (value) => {
+    setSearchTerm(value);
   };
 
-  const handleSearchSubmit = async (e) => {
-    e.preventDefault();
+  const handleSearchSubmit = async () => {
+    setAllPatients([]);
     if (!searchTerm.trim()) {
       handleNavigation('assignedPatients');
       return;
@@ -199,19 +203,31 @@ function DoctorDashboard() {
     setError(null);
     console.log("Searching for:", searchTerm);
     try {
-      const response = await fetch(`${API_BASE_URL}/patients?search=${encodeURIComponent(searchTerm)}`, {
-        headers: getAuthHeaders(),
-      });
+      const token = localStorage.getItem('token');
+      const decodedToken = jwtDecode(token);
+      const staffId = decodedToken.staffId;
+      
+      const response = await fetch(
+        `${API_BASE_URL}/patients?search=${encodeURIComponent(searchTerm.trim())}&doctor_id=${staffId}`,
+        {
+          headers: getAuthHeaders(),
+        }
+      );
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       const data = await response.json();
       console.log("Search results:", data);
-      setAllPatients(data);
-      handleNavigation('allPatientsSearch');
+      if (data.length === 0) {
+        setError("No patients found matching your search.");
+        setAllPatients([]);
+      } else {
+        setAllPatients(data);
+        handleNavigation('allPatientsSearch');
+      }
     } catch (err) {
       console.error("Error searching patients:", err);
-      setError("Error searching patients.");
+      setError("Error searching patients. Please try again.");
       setAllPatients([]);
     } finally {
       setLoading(false);
@@ -231,6 +247,7 @@ function DoctorDashboard() {
     setShowAddTreatmentForm(false);
     setShowEditTreatmentForm(false);
     setIsEditingPatient(false);
+    setBillingSlipData(null);
 
     try {
       const response = await fetch(`${API_BASE_URL}/doctor/patients/${patient.patient_id}`, {
@@ -273,7 +290,7 @@ function DoctorDashboard() {
       }
       const paymentData = await paymentResponse.json();
       console.log("Fetched payment status:", paymentData);
-      setPatientPaymentStatus(paymentData.is_paid ? "Paid" : "Unpaid");
+      setPatientPaymentStatus(paymentData);
 
       setActiveView('patientRecord');
 
@@ -287,6 +304,7 @@ function DoctorDashboard() {
 
   const handleTreatmentChange = (e) => {
     const { name, value } = e.target;
+    console.log(`Input field ${name} changed to: ${value}`);
     setLogTreatmentDetails(prev => {
       const newState = { ...prev, [name]: value };
       if (name === "name" && value.trim() !== "") {
@@ -331,48 +349,92 @@ function DoctorDashboard() {
   };
 
   const handleLogTreatmentAndDiagnosis = async (e) => {
-    e.preventDefault(); // Prevent page refresh
-    if (!selectedPatient || !selectedVisitId || !logTreatmentDetails.name || !logTreatmentDetails.cost || !newDiagnosis) {
-      alert("Please fill in all fields for treatment and diagnosis.");
-      return;
-    }
-
+    e.preventDefault();
     setLoading(true);
     setError(null);
 
+    if (!selectedPatient || !selectedVisitId) {
+      setError("Please select a patient and a visit first.");
+      setLoading(false);
+      return;
+    }
+
+    // Capture the current single treatment to be logged
+    const treatmentToLog = {
+      name: logTreatmentDetails.name,
+      cost: parseFloat(logTreatmentDetails.cost),
+      description: logTreatmentDetails.description,
+    };
+
+    if (!treatmentToLog.name || isNaN(treatmentToLog.cost) || !newDiagnosis.trim()) {
+      setError("Please fill in all fields for treatment and diagnosis (Name, Cost, Diagnosis).");
+      setLoading(false);
+      return;
+    }
+
     try {
-      const response = await fetch(`${API_BASE_URL}/doctor/treatments`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          patientId: selectedPatient.patient_id,
-          visitId: selectedVisitId,
-          name: logTreatmentDetails.name,
-          cost: parseFloat(logTreatmentDetails.cost),
-          treatment_description: logTreatmentDetails.description,
+      const token = localStorage.getItem("token");
+      const response = await axios.post(
+        `${API_BASE_URL}/doctor/log-treatment-diagnosis`,
+        {
+          patient_id: selectedPatient.patient_id,
+          visit_id: selectedVisitId,
+          treatments: [treatmentToLog], // Send as an array containing the single treatment
           diagnosis: newDiagnosis,
-        }),
-      });
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error("Backend error response:", errorData);
-        throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.message}`);
+      if (response.status === 201) {
+        alert("Treatment and diagnosis logged successfully!");
+        // After successfully logging treatments and diagnosis, generate the bill
+        await generateBilling(selectedVisitId, selectedPatient.patient_id);
+        fetchPendingTreatmentVisits();
+        setLogTreatmentDetails({ name: "", cost: "", description: "" }); // Clear treatment form
+        setNewDiagnosis(""); // Clear diagnosis form
+        setSelectedPatient(null); // Clear selected patient
+        setSelectedVisitId(null); // Clear selected visit
+        handleNavigation('assignedPatients'); // Go back to the assigned patients view
+      } else {
+        setError(response.data.message || "Failed to log treatment and diagnosis.");
       }
-
-      alert("Treatment and diagnosis logged successfully!");
-      // Clear form fields after successful submission
-      setLogTreatmentDetails({ name: "", cost: "", description: "" });
-      setNewDiagnosis("");
-      // Refresh patient data to show updated visits
-      await handleSelectPatient(selectedPatient, selectedVisitId);
-      // Refresh the pending treatment visits list
-      await fetchPendingTreatmentVisits();
     } catch (err) {
       console.error("Error logging treatment and diagnosis:", err);
-      setError(`Error logging treatment and diagnosis: ${err.message}`);
+      setError(err.response?.data?.message || err.message || "Failed to log treatment and diagnosis.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const generateBilling = async (visitId, patientId) => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await axios.post(
+        `${API_BASE_URL}/billing/generate`,
+        {
+          visit_id: visitId,
+          patient_id: patientId,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (response.status === 201) {
+        console.log("Billing generated successfully!");
+      } else {
+        console.error("Failed to generate billing:", response.data.message);
+      }
+    } catch (error) {
+      console.error("Error generating billing:", error);
     }
   };
 
@@ -428,37 +490,66 @@ function DoctorDashboard() {
     setShowVisitHistory(true);
   };
 
-  const generateBillingSlip = () => {
-    // This is a placeholder for actual billing slip generation logic
-    if (selectedPatient) {
-      alert(`Generating billing slip for ${selectedPatient.full_name}`);
-      setShowBillingSlip(true);
+  const generateBillingSlip = (visitIdToGenerate) => {
+    console.log("generateBillingSlip called.");
+    console.log("selectedPatient:", selectedPatient);
+    console.log("visitIdToGenerate:", visitIdToGenerate);
+
+    if (selectedPatient && visitIdToGenerate) {
+      const visit = selectedPatient.visits.find(v => v.visit_id === visitIdToGenerate);
+      console.log("Found visit in selectedPatient.visits:", visit);
+      if (visit) {
+        // Generate a simple placeholder billing ID for now
+        const billingId = `BILL-${Math.floor(1000 + Math.random() * 9000)}`;
+
+        setBillingSlipData({
+          billing_id: billingId,
+          visit_id: visit.visit_id,
+          patient_name: selectedPatient.full_name,
+          visit_purpose: visit.visit_purpose,
+          visit_date: visit.visit_date,
+        });
+        setShowBillingSlip(true);
+      } else {
+        alert("Visit details not found for the selected visit ID.");
+      }
     } else {
-      alert("Please select a patient first.");
+      alert("Please select a patient and a visit to generate a billing slip.");
     }
   };
 
-  const generateMedicalAbstract = async () => {
-    if (!selectedPatient) {
-      alert("Please select a patient first.");
+  const generateMedicalAbstract = async (patientId, visitId) => {
+    if (!patientId || !visitId) {
+      alert("Please select a patient and a visit to generate abstract.");
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/doctor/medical-abstract/${selectedPatient.patient_id}`, {
-        headers: getAuthHeaders(),
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      const token = localStorage.getItem("token");
+      const response = await axios.post(
+        `${API_BASE_URL}/medical-abstracts/generate-for-visit`,
+        {
+          patient_id: patientId,
+          visit_id: visitId,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (response.status === 200) {
+        setMedicalAbstractData(response.data.abstract);
+        setShowMedicalAbstract(true);
+      } else {
+        setError(response.data.message || "Failed to generate medical abstract.");
       }
-      const data = await response.json();
-      // For now, just display the data in an alert or console
-      alert("Medical Abstract: " + JSON.stringify(data, null, 2));
-      setShowMedicalAbstract(true);
     } catch (err) {
       console.error("Error generating medical abstract:", err);
-      setError("Error generating medical abstract.");
+      setError(err.response?.data?.message || err.message || "Failed to generate medical abstract.");
     } finally {
       setLoading(false);
     }
@@ -549,14 +640,157 @@ function DoctorDashboard() {
   };
 
   const handlePrintSlip = () => {
-    window.print();
+    const printContent = document.querySelector('.medical-abstract-preview');
+    if (printContent) {
+      const printWindow = window.open('', '', 'height=800,width=1200');
+      printWindow.document.write('<html><head><title>Medical Abstract</title>');
+      printWindow.document.write(`
+        <style>
+          body { font-family: 'Times New Roman', serif; margin: 40px; background-color: #f8f8f8; }
+          .medical-abstract-preview {
+            font-size: 1em;
+            padding: 50px; /* Increased padding */
+            border: 6px solid #004d40; /* Slightly thicker solid border */
+            border-radius: 12px; /* More rounded corners */
+            text-align: left;
+            margin: 0 auto;
+            max-width: 850px; /* Slightly wider */
+            box-shadow: 0 0 20px rgba(0,0,0,0.3); /* Stronger shadow */
+            background-color: #ffffff;
+            position: relative;
+            background-image: linear-gradient(to bottom, #fefefe, #ffffff); /* Subtle gradient */
+          }
+          .medical-abstract-preview h3 {
+            font-size: 3em; /* Slightly larger */
+            color: #004d40;
+            margin-bottom: 30px; /* Increased margin */
+            text-transform: uppercase;
+            letter-spacing: 2px; /* Increased letter spacing */
+            text-align: center;
+            border-bottom: 3px double #004d40; /* Double underline for heading */
+            padding-bottom: 15px; /* Increased padding */
+          }
+          .abstract-content {
+            margin-top: 30px; /* Increased margin */
+            border: none; /* Remove subtle border, rely on field borders */
+            padding: 0; /* Remove padding here */
+            border-radius: 0;
+            background-color: transparent; /* Transparent background */
+          }
+          .abstract-content p {
+            display: flex; /* Use flexbox for label-value alignment */
+            margin: 15px 0; /* Increased margin */
+            line-height: 1.8;
+            font-size: 1.1em; /* Slightly larger font for fields */
+            padding: 8px 0; /* Padding for each field */
+            border-bottom: 1px solid #ccc; /* Solid line for each field */
+            align-items: baseline; /* Align text baselines */
+          }
+          .abstract-content p:last-child { border-bottom: none; }
+          .abstract-content strong {
+            font-size: 1em; /* Keep relative to parent p font-size */
+            color: #222;
+            display: inline-block;
+            min-width: 180px; /* Wider min-width for labels */
+            font-weight: bold;
+            text-transform: capitalize; /* Capitalize labels */
+            flex-shrink: 0; /* Prevent label from shrinking */
+            margin-right: 15px; /* Space between label and value */
+          }
+          .medical-history {
+            margin-top: 40px; /* Increased margin */
+            padding-top: 25px; /* Increased padding */
+            border-top: 3px solid #004d40; /* Thicker top border */
+          }
+          .medical-history h4 { font-size: 2em; color: #004d40; margin-bottom: 20px; text-align: center; }
+          .visit-summary {
+            border: 2px solid #e0e0e0; /* Thicker border */
+            padding: 20px; /* Increased padding */
+            margin-bottom: 25px; /* Increased margin */
+            border-radius: 8px; /* More rounded corners */
+            background-color: #fcfcfc; /* Lighter background */
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05); /* Subtle shadow for each visit */
+          }
+          .visit-summary h5 { font-size: 1.6em; color: #333; margin-bottom: 15px; border-bottom: 1px dashed #bbb; padding-bottom: 8px; }
+          .visit-summary p { margin: 10px 0; font-size: 1em; }
+          .visit-summary strong { font-size: 1.1em; min-width: 120px; }
+          .treatments-list { margin-top: 15px; padding-left: 30px; }
+          .treatment-item { margin-bottom: 8px; border-left: 3px solid #b2dfdb; padding-left: 10px; } /* Highlight treatment items */
+          .abstract-actions { display: none !important; }
+        </style>
+      `);
+      printWindow.document.write('</head><body>');
+      printWindow.document.write(printContent.outerHTML);
+      printWindow.document.write('</body></html>');
+      printWindow.document.close();
+      printWindow.focus();
+      printWindow.print();
+      printWindow.close();
+    } else {
+      alert("Medical abstract content not found for printing.");
+    }
+  };
+
+  const handlePrintBillingSlip = () => {
+    const printContent = document.querySelector('.billing-slip-preview');
+    if (printContent) {
+      const printWindow = window.open('', '', 'height=600,width=800');
+      printWindow.document.write('<html><head><title>Billing Slip</title>');
+      printWindow.document.write(`
+        <style>
+          body { font-family: Arial, sans-serif; margin: 20px; }
+          .billing-slip-preview {
+            border: 1px solid #ccc;
+            padding: 20px;
+            max-width: 400px;
+            margin: 0 auto;
+            font-size: 1.1em;
+          }
+          .billing-slip-preview h3 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+          }
+          .billing-slip-preview p {
+            margin-bottom: 10px;
+          }
+          .billing-slip-preview strong {
+            display: inline-block;
+            width: 120px;
+          }
+          .abstract-actions, .billing-slip-preview button { display: none !important; } /* Hide buttons in print */
+        </style>
+      `);
+      printWindow.document.write('</head><body>');
+      printWindow.document.write(printContent.outerHTML);
+      printWindow.document.write('</body></html>');
+      printWindow.document.close();
+      printWindow.focus();
+      printWindow.print();
+      printWindow.close();
+    } else {
+      alert("Billing slip content not found for printing.");
+    }
+  };
+
+  const handleGenerateBillingSlipForVisit = (visitId) => {
+    // No need to set setSelectedVisitId here, pass directly to generateBillingSlip
+    generateBillingSlip(visitId);
   };
 
   const navigationTabs = [
-    { id: "assignedPatients", name: "Assigned Patients" },
-    { id: "availableTreatments", name: "Available Treatments" },
-    { id: "medicalAbstract", name: "Medical Abstract" },
-    { id: "patientReports", name: "Patient Reports" },
+    { value: "assignedPatients", label: "Assigned Patients" },
+    { value: "availableTreatments", label: "Available Treatments" },
+    { value: "patientReports", label: "Patient Reports" },
+  ];
+
+  const createButtonOptions = [
+    { value: "add_treatment", label: "Add Treatment" },
+    { value: "edit_patient", label: "Edit Patient" },
+    { value: "view_visit_history", label: "Visit History" },
+    { value: "generate_medical_abstract", label: "Medical Abstract" },
+    { value: "generate_billing_slip", label: "Billing Slip" },
+    { value: "edit_visit", label: "Edit Visit" },
   ];
 
   return (
@@ -566,8 +800,9 @@ function DoctorDashboard() {
       currentTab={activeView}
       onTabChange={handleNavigation}
       showSearchBar={true}
-      onSearch={(value) => setSearchTerm(value)}
-      searchPlaceholder="Search Patient Here"
+      onSearch={handleSearchChange}
+      searchPlaceholder="Search by patient name or ID"
+      onSearchButtonClick={handleSearchSubmit}
       onLogout={() => {
         localStorage.removeItem("token");
         navigate("/login");
@@ -620,6 +855,44 @@ function DoctorDashboard() {
         </div>
       )}
 
+      {activeView === 'allPatientsSearch' && (
+        <div className="dashboard-section">
+          <h2 className="section-title">Search Results</h2>
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Patient ID</th>
+                  <th>Patient Name</th>
+                  <th>Age</th>
+                  <th>Gender</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allPatients.length > 0 ? (
+                  allPatients.map((patient) => (
+                    <tr key={patient.patient_id}>
+                      <td>{patient.patient_id}</td>
+                      <td>{patient.full_name}</td>
+                      <td>{patient.age !== null ? patient.age : 'N/A'}</td>
+                      <td>{patient.gender}</td>
+                      <td className="actions-column">
+                        <button onClick={() => handleSelectPatient(patient)}>View Record</button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="5">No patients found matching your search.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {activeView === 'patientRecord' && selectedPatient && (
         <div className="dashboard-section">
           <h2 className="section-title">Patient Record: {selectedPatient.full_name}</h2>
@@ -652,15 +925,13 @@ function DoctorDashboard() {
               <b>Home Address:</b> {selectedPatient.home_address || 'N/A'}
             </div>
             <div className="detail-item full-width">
-              <b>Payment Status:</b> {patientPaymentStatus ? patientPaymentStatus.status : 'N/A'}
+              <b>Payment Status:</b> {patientPaymentStatus !== null ? (patientPaymentStatus.is_paid ? "Paid" : "Unpaid") : 'N/A'}
             </div>
           </div>
 
           <div className="button-group">
             <button onClick={handleEditPatient}>Edit Patient</button>
             <button onClick={handleViewVisitHistory}>View Visit History</button>
-            <button onClick={generateMedicalAbstract}>Generate Medical Abstract</button>
-            <button onClick={generateBillingSlip}>Generate Billing Slip</button>
           </div>
 
           {isEditingPatient && (
@@ -708,8 +979,10 @@ function DoctorDashboard() {
                   </thead>
                   <tbody>
                     {selectedPatient.visits && selectedPatient.visits.length > 0 ? (
-                      selectedPatient.visits.map((visit) => (
-                        <tr key={visit.visit_id}>
+                      selectedPatient.visits.map((visit, index) => {
+                        console.log(`Visit ID: ${visit.visit_id}, Index: ${index}`); // Keep for debugging keys
+                        return (
+                        <tr key={`${visit.visit_id}-${index}`}>
                           <td>{visit.visit_id}</td>
                           <td>{new Date(visit.visit_date).toLocaleDateString()}</td>
                           <td>{visit.visit_purpose}</td>
@@ -717,9 +990,20 @@ function DoctorDashboard() {
                           <td>{visit.diagnosis}</td>
                           <td className="actions-column">
                             <button onClick={() => handleEditVisitClick(visit)}>Edit Visit</button>
+                            {visit.is_paid ? (
+                              <button onClick={() => generateMedicalAbstract(selectedPatient.patient_id, visit.visit_id)}>Generate Abstract</button>
+                            ) : (
+                              <button disabled title="Payment not completed">Generate Abstract</button>
+                            )}
+                            {visit.is_paid ? (
+                              <button onClick={() => handleGenerateBillingSlipForVisit(visit.visit_id)}>Generate Billing Slip</button>
+                            ) : (
+                              <button disabled title="Payment not completed">Generate Billing Slip</button>
+                            )}
                           </td>
                         </tr>
-                      ))
+                        );
+                      })
                     ) : (
                       <tr>
                         <td colSpan="6">No visit history found.</td>
@@ -795,65 +1079,49 @@ function DoctorDashboard() {
           {showBillingSlip && selectedPatient && (
             <div className="billing-slip-preview">
               <h3>Billing Slip Preview for {selectedPatient.full_name}</h3>
-              {/* This is a placeholder for actual billing slip content */}
-              <p>Billing ID: [Auto-generated]</p>
-              <p>Patient Name: {selectedPatient.full_name}</p>
-              <p>Total Amount: $XXXX.XX</p>
-              <p>Treatments: ...</p>
-              <p>Diagnoses: ...</p>
-              <button onClick={handlePrintSlip}>Print Slip</button>
-              <button onClick={() => setShowBillingSlip(false)}>Close Preview</button>
+              {billingSlipData ? (
+                <div className="abstract-content">
+                  <p><strong>Billing ID:</strong> {billingSlipData.billing_id}</p>
+                  <p><strong>Visit ID:</strong> {billingSlipData.visit_id}</p>
+                  <p><strong>Patient Name:</strong> {billingSlipData.patient_name}</p>
+                  <p><strong>Visit Purpose:</strong> {billingSlipData.visit_purpose}</p>
+                  <p><strong>Visit Date:</strong> {new Date(billingSlipData.visit_date).toLocaleDateString()}</p>
+                </div>
+              ) : (
+                <p>No billing slip data available. Please generate one.</p>
+              )}
+              <div className="abstract-actions">
+                <button onClick={handlePrintBillingSlip}>Print Slip</button>
+                <button onClick={() => setShowBillingSlip(false)}>Close Preview</button>
+              </div>
             </div>
           )}
 
           {showMedicalAbstract && selectedPatient && (
             <div className="medical-abstract-preview">
               <h3>Medical Abstract for {selectedPatient.full_name}</h3>
-              <p>Abstract content will go here.</p>
-              <button onClick={() => setShowMedicalAbstract(false)}>Close Abstract</button>
+              {medicalAbstractData ? (
+                <div className="abstract-content">
+                  <p><strong>Patient Name:</strong> {medicalAbstractData.patient_name}</p>
+                  <p><strong>Patient ID:</strong> {medicalAbstractData.patient_id}</p>
+                  <p><strong>Age:</strong> {medicalAbstractData.age}</p>
+                  <p><strong>Gender:</strong> {medicalAbstractData.gender}</p>
+                  <p><strong>Visit Date:</strong> {new Date(medicalAbstractData.visit_date).toLocaleDateString()}</p>
+                  <p><strong>Visit Purpose:</strong> {medicalAbstractData.visit_purpose}</p>
+                  <p><strong>Diagnosis:</strong> {medicalAbstractData.diagnosis}</p>
+                  <p><strong>Treatments Summary:</strong> {medicalAbstractData.treatments_summary}</p>
+                  <p><strong>Payment Status:</strong> {medicalAbstractData.payment_status}</p>
+                  <p><strong>Generated Date:</strong> {medicalAbstractData.generated_date}</p>
+                </div>
+              ) : (
+                <p>No medical abstract data available.</p>
+              )}
+              <div className="abstract-actions">
+                <button onClick={() => setShowMedicalAbstract(false)}>Close Abstract</button>
+                {medicalAbstractData && <button onClick={handlePrintSlip}>Print Abstract</button>}
+              </div>
             </div>
           )}
-        </div>
-      )}
-
-      {activeView === 'allPatientsSearch' && (
-        <div className="dashboard-section">
-          <h2 className="section-title">Search Results</h2>
-          <div className="table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Patient ID</th>
-                  <th>Full Name</th>
-                  <th>Date of Birth</th>
-                  <th>Gender</th>
-                  <th>Contact No</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allPatients.length > 0 ? (
-                  allPatients.map((patient) => (
-                    <tr key={patient.patient_id}>
-                      <td>{patient.patient_id}</td>
-                      <td>{patient.full_name}</td>
-                      <td>{new Date(patient.date_of_birth).toLocaleDateString()}</td>
-                      <td>{patient.gender}</td>
-                      <td>{patient.contact_no}</td>
-                      <td className="actions-column">
-                        <button onClick={() => handleSelectPatient(patient)}>View Record</button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="6">No patients found matching your search.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <button onClick={handleBackToDashboard}>Back to Dashboard</button>
         </div>
       )}
 
@@ -1063,7 +1331,7 @@ function DoctorDashboard() {
                           .map(treatment => (
                             <div key={treatment.treatment_id} className="treatment-item">
                               <p><strong>{treatment.treatment_name}</strong></p>
-                              <p>Cost: ${treatment.price}</p>
+                              <p>Cost: {treatment.price}</p>
                               <p>Purpose: {treatment.purpose}</p>
                             </div>
                           ))}
@@ -1114,8 +1382,8 @@ function DoctorDashboard() {
                 <h3>Most Used Treatments</h3>
                 {patientReports.treatments && patientReports.treatments.length > 0 ? (
                   <ul className="report-list">
-                    {patientReports.treatments.map((treatment, index) => (
-                      <li key={index}>
+                    {patientReports.treatments.map((treatment) => (
+                      <li key={treatment.name}>
                         <span className="treatment-name">{treatment.name}</span>
                         <span className="treatment-count">({treatment.count} times)</span>
                       </li>
@@ -1130,8 +1398,8 @@ function DoctorDashboard() {
                 <h3>Common Diagnoses</h3>
                 {patientReports.diagnoses && patientReports.diagnoses.length > 0 ? (
                   <ul className="report-list">
-                    {patientReports.diagnoses.map((diagnosis, index) => (
-                      <li key={index}>
+                    {patientReports.diagnoses.map((diagnosis) => (
+                      <li key={diagnosis.name}>
                         <span className="diagnosis-name">{diagnosis.name}</span>
                         <span className="diagnosis-count">({diagnosis.count} times)</span>
                       </li>

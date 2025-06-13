@@ -290,9 +290,14 @@ const NurseDashboard = () => {
   };
 
   const navigationTabs = [
-    { id: 'viewPatients', name: 'View Patients' },
-    { id: 'addPatient', name: 'Add Patient' },
-    { id: 'record', name: 'Record Visit' }, // Assuming this will be used for specific patient's visit
+    { value: "viewPatients", label: "View Patients" },
+    { value: "addPatient", label: "Add Patient" },
+  ];
+
+  const createButtonOptions = [
+    { value: "logVisit", label: "Log Visit" },
+    { value: "editPatient", label: "Edit Patient" },
+    { value: "viewVisitHistory", label: "View Visit History" },
   ];
 
   const handleNavAddPatient = () => {

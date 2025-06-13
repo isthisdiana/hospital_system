@@ -20,11 +20,11 @@ function DashboardLayout({ title, children, showSearchBar, onSearch, searchPlace
                     <div className="dashboard-nav-buttons">
                         {navigationTabs && navigationTabs.map(tab => (
                             <button
-                                key={tab.id}
-                                onClick={() => onTabChange(tab.id)}
-                                className={currentTab === tab.id ? 'dashboard-nav-button active' : 'dashboard-nav-button'}
+                                key={tab.value}
+                                onClick={() => onTabChange(tab.value)}
+                                className={currentTab === tab.value ? 'dashboard-nav-button active' : 'dashboard-nav-button'}
                             >
-                                {tab.name}
+                                {tab.label}
                             </button>
                         ))}
                         {createButton && (
@@ -51,6 +51,11 @@ function DashboardLayout({ title, children, showSearchBar, onSearch, searchPlace
                                 type="text"
                                 placeholder={searchPlaceholder}
                                 onChange={(e) => onSearch(e.target.value)}
+                                onKeyPress={(e) => {
+                                    if (e.key === 'Enter') {
+                                        onSearchButtonClick();
+                                    }
+                                }}
                                 className="search-input"
                             />
                             <button className="search-button" onClick={onSearchButtonClick}>Search</button>

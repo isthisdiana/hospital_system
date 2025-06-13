@@ -104,8 +104,8 @@ function AdminDashboard() {
   };
 
   const navigationTabs = [
-    { id: "system_reports", name: "System Reports" },
-    { id: "user_accounts", name: "User Accounts" },
+    { value: "system_reports", label: "System Reports" },
+    { value: "user_accounts", label: "User Accounts" },
   ];
 
   const createButtonOptions = roles.map(r => ({ value: r, label: r.charAt(0).toUpperCase() + r.slice(1).replace("_", " ") }));

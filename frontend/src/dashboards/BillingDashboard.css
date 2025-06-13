@@ -1,0 +1,21 @@
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover {
+  background-color: #f0f0f0;
+}
+
+/* Ensure table cells have appropriate padding and alignment */
+.data-table th,
+.data-table td {
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: middle;
+  font-size: 1rem; /* Default font size for table cells */
+}
+
+.data-table th {
+  font-weight: bold;
+  background-color: #f5f5f5;
+} 
