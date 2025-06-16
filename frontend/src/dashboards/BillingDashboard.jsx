@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import "./BillingDashboard.css";
 import DashboardLayout from "../components/DashboardLayout";
 import {
-  Typography, Button, Box, Paper, TextField, Grid, MenuItem, Select
+  Typography, Button, Box, Paper, TextField, Grid, MenuItem, Select, Divider
 } from "@mui/material";
 import axios from "axios";
 import { jwtDecode } from "jwt-decode";
@@ -174,13 +174,21 @@ function BillingDashboard() {
   }, []);
 
   useEffect(() => {
-    if (mainSection === "billingHistory") {
+    let intervalId;
+    if (mainSection === "billingReports") {
+      fetchBillingReports(); // Initial fetch
+      intervalId = setInterval(fetchBillingReports, 60000); // Auto-update every 60 seconds
+    } else if (mainSection === "billingHistory") {
       fetchBillingHistory();
     } else if (mainSection === "availableTreatments") {
       fetchAvailableTreatments();
-    } else if (mainSection === "billingReports") {
-      fetchBillingReports();
     }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
   }, [mainSection]);
 
   const handleSelectUnpaidBill = async (billingId) => {
@@ -260,7 +268,6 @@ function BillingDashboard() {
         {
           billing_id: currentBill.billing_id,
           payment_method: paymentMethod,
-          receipt_number: receiptNumber,
           billing_staff_id: billingStaffId,
         },
         {
@@ -273,9 +280,22 @@ function BillingDashboard() {
 
       if (response.status === 200) {
         alert("Payment processed successfully!");
-        setCurrentBill((prev) => ({ ...prev, is_paid: 1, payment_method: paymentMethod, receipt_number: receiptNumber }));
+
+        // Fetch the logged-in billing staff's name
+        const staffResponse = await axios.get(`${API_BASE_URL}/users?staff_id=${billingStaffId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const loggedInStaffName = staffResponse.data.find(staff => staff.staff_id === billingStaffId)?.full_name || 'N/A';
+
+        setCurrentBill((prev) => ({ 
+          ...prev,
+          is_paid: 1, 
+          payment_method: paymentMethod,
+          billing_staff_name: loggedInStaffName, // Update with the logged-in staff's name
+        }));
         setShowReceipt(true);
-        setReceiptNumber('');
         fetchUnpaidBills();
       } else {
         setError(response.data.message || "Failed to process payment.");
@@ -290,61 +310,167 @@ function BillingDashboard() {
     }
   };
 
-  const generateReceipt = () => {
+  const handleSearchSubmit = () => {
+    if (searchQuery) {
+      handleSelectUnpaidBill(searchQuery);
+    }
+  };
+
+  const renderReceiptContent = () => {
     if (!currentBill) return null;
 
+    const formatCurrency = (amount) => {
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'PHP' }).format(amount);
+    };
+
     return (
-      <Box className="receipt-container">
-        <Typography variant="h6">💰 Payment Receipt</Typography>
-        <Box className="receipt-content">
-          <Typography><strong>Billing ID:</strong> {currentBill.billing_id}</Typography>
-          <Typography><strong>Patient ID:</strong> {currentBill.patient_id}</Typography>
-          <Typography><strong>Patient Name:</strong> {currentBill.patient_name}</Typography>
-          <Typography><strong>Date:</strong> {new Date(currentBill.billing_date).toLocaleDateString()}</Typography>
-          <Typography><strong>Doctor:</strong> {currentBill.doctor_name}</Typography>
-          <Typography><strong>PhilHealth ID:</strong> {currentBill.philhealth_id}</Typography>
-          <Typography><strong>Billing Staff:</strong> {currentBill.billing_staff_name}</Typography>
-          
-          <Typography variant="subtitle1" mt={2}>Treatments:</Typography>
-          <div className="table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Treatment</th>
-                  <th>Quantity</th>
-                  <th>Price</th>
+      <Box sx={{ p: 3, border: '1px solid #ddd', borderRadius: '8px', maxWidth: '800px', margin: '20px auto', backgroundColor: '#fff' }}>
+        <Box sx={{ textAlign: 'center', mb: 3 }}>
+          <Typography variant="h5" component="div" sx={{ fontWeight: 'bold', color: '#1976d2' }}>
+            Philippine General Hospital Memorial Center 
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Manila, Philippines | Contact: (02) 8554-8400
+          </Typography>
+          <Typography variant="subtitle1" sx={{ mt: 2, fontWeight: 'bold' }}>
+            Official Payment Receipt
+          </Typography>
+        </Box>
+
+        <Box sx={{ mb: 3 }}>
+          <Grid container spacing={1}>
+            <Grid item xs={6}>
+              <Typography variant="body2"><strong>Billing ID:</strong> {currentBill.billing_id}</Typography>
+            </Grid>
+            <Grid item xs={6}>
+              <Typography variant="body2"><strong>Date:</strong> {new Date().toLocaleDateString()}</Typography>
+            </Grid>
+            <Grid item xs={6}>
+              <Typography variant="body2"><strong>Patient Name:</strong> {currentBill.patient_name}</Typography>
+            </Grid>
+            <Grid item xs={6}>
+              <Typography variant="body2"><strong>Patient ID:</strong> {currentBill.patient_id}</Typography>
+            </Grid>
+            <Grid item xs={6}>
+              <Typography variant="body2"><strong>Doctor:</strong> {currentBill.doctor_name}</Typography>
+            </Grid>
+            <Grid item xs={6}>
+              <Typography variant="body2"><strong>PhilHealth ID:</strong> {currentBill.philhealth_id || 'N/A'}</Typography>
+            </Grid>
+            <Grid item xs={12}>
+              <Typography variant="body2"><strong>Billing Staff:</strong> {currentBill.billing_staff_name || 'N/A'}</Typography>
+            </Grid>
+          </Grid>
+        </Box>
+
+        <Divider sx={{ my: 2 }} />
+
+        <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 'bold' }}>Treatments/Services:</Typography>
+        <div className="table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Treatment</th>
+                <th>Quantity</th>
+                <th>Unit Price</th>
+                <th>Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {currentBill.treatments.map((treatment, index) => (
+                <tr key={`${treatment.id}-${index}`}>
+                  <td>{treatment.name}</td>
+                  <td>{treatment.quantity}</td>
+                  <td>{formatCurrency(treatment.price)}</td>
+                  <td>{formatCurrency(treatment.quantity * treatment.price)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {currentBill.treatments.map((treatment, index) => (
-                  <tr key={`${treatment.id}-${index}`}>
-                    <td>{treatment.name}</td>
-                    <td>{treatment.quantity}</td>
-                    <td>{treatment.price}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-          <Box className="totals-section">
-            <Typography variant="h6"><strong>Total Amount:</strong> {currentBill.total_amount}</Typography>
-            <Typography variant="h6"><strong>Discount Amount:</strong> {currentBill.discount_amount}</Typography>
-            <Typography variant="h6"><strong>Final Amount:</strong> {currentBill.final_amount}</Typography>
-            <Typography sx={{ fontSize: '1.1rem' }}><strong>Payment Method:</strong> {currentBill.payment_method || 'N/A'}</Typography>
-            <Typography sx={{ fontSize: '1.1rem' }}><strong>Payment Status:</strong> {currentBill.is_paid ? 'Paid' : 'Unpaid'}</Typography>
-          </Box>
+        <Divider sx={{ my: 2 }} />
 
-          <Button onClick={() => window.print()} variant="contained" color="primary" sx={{ mt: 2 }}>Print Receipt</Button>
+        <Box className="totals-section" sx={{ textAlign: 'right' }}>
+          <Typography variant="h6"><strong>Total Amount:</strong> {formatCurrency(currentBill.total_amount)}</Typography>
+          <Typography variant="h6"><strong>Discount:</strong> {formatCurrency(currentBill.discount_amount)}</Typography>
+          <Typography variant="h5" sx={{ mt: 1, fontWeight: 'bold', color: '#d32f2f' }}>
+            <strong>Amount Due:</strong> {formatCurrency(currentBill.final_amount)}
+          </Typography>
+          <Typography variant="body1" sx={{ mt: 2 }}><strong>Payment Method:</strong> {currentBill.payment_method || 'N/A'}</Typography>
+          <Typography variant="body1"><strong>Payment Status:</strong> {currentBill.is_paid ? 'Paid' : 'Unpaid'}</Typography>
+        </Box>
+
+        <Divider sx={{ my: 2 }} />
+
+        <Box sx={{ textAlign: 'center', mt: 3 }}>
+          <Typography variant="body2" color="text.secondary">
+            Thank you for your payment.
+          </Typography>
+          <Button onClick={handlePrintReceipt} variant="contained" color="primary" sx={{ mt: 2 }}>
+            Print Receipt
+          </Button>
         </Box>
       </Box>
     );
   };
 
-  const handleSearchSubmit = () => {
-    if (searchQuery) {
-      handleSelectUnpaidBill(searchQuery);
+  const handlePrintReceipt = () => {
+    if (!currentBill) return;
+
+    const receiptDisplayArea = document.getElementById('receipt-display-area');
+    if (!receiptDisplayArea) {
+      console.error("Receipt display area not found in DOM.");
+      return;
     }
+    const receiptHtml = receiptDisplayArea.innerHTML;
+
+    console.log("Captured Receipt HTML:", receiptHtml); // DEBUG: Log the captured HTML
+
+    if (!receiptHtml || receiptHtml.trim() === '') {
+      console.warn("Receipt HTML is empty or invalid.");
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+        alert("Please allow pop-ups for printing.");
+        return;
+    }
+
+    printWindow.document.write('<html><head><title>Payment Receipt</title>');
+
+    // Copy all link tags (CSS) and style tags from the main document to the print window
+    Array.from(document.querySelectorAll('link[rel="stylesheet"], style')).forEach(tag => {
+      if (tag.tagName === 'LINK') {
+        printWindow.document.write(`<link rel="stylesheet" href="${tag.href}">`);
+      } else if (tag.tagName === 'STYLE') {
+        printWindow.document.write(`<style>${tag.innerHTML}</style>`);
+      }
+    });
+
+    // Add some basic print styles directly to the iframe head
+    printWindow.document.write(`
+      <style>
+        body { margin: 0; padding: 0; }
+        .receipt-container { margin: 20px auto; max-width: 800px; border: none; box-shadow: none; }
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table th, .data-table td { border: 1px solid #eee; padding: 8px; text-align: left; color: #000; }
+        .totals-section { text-align: right; }
+        button { display: none; } /* Hide print button in printout */
+      </style>
+    `);
+
+    printWindow.document.write('</head><body>');
+    printWindow.document.write(receiptHtml);
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+
+    printWindow.onload = () => {
+      printWindow.focus(); // Focus on the new window
+      printWindow.print(); // Open print dialog
+      printWindow.close(); // Close the new window after printing
+    };
   };
 
   const generateMedicalAbstract = async (patientId, visitId) => {
@@ -484,16 +610,6 @@ function BillingDashboard() {
                           <MenuItem value="Online" sx={{ fontSize: '1rem' }}>GCash</MenuItem>
                         </Select>
                       </Grid>
-                      <Grid item xs={12} sm={6}>
-                        <TextField
-                          label="Receipt Number (Optional)"
-                          variant="outlined"
-                          fullWidth
-                          value={receiptNumber}
-                          onChange={(e) => setReceiptNumber(e.target.value)}
-                          sx={{ fontSize: '1rem' }}
-                        />
-                      </Grid>
                       <Grid item xs={12}>
                         <Button variant="contained" color="primary" onClick={handlePayment} disabled={!paymentMethod} sx={{ fontSize: '1.1rem' }}>
                           Process Payment
@@ -502,7 +618,11 @@ function BillingDashboard() {
                     </Grid>
                   </Box>
                 )}
-                {showReceipt && generateReceipt()}
+                {showReceipt && currentBill && (
+                  <Box id="receipt-display-area" sx={{ display: 'block' }}>
+                    {renderReceiptContent()}
+                  </Box>
+                )}
               </Box>
             </Paper>
           )}
@@ -560,7 +680,6 @@ function BillingDashboard() {
                     <th>Final Amount</th>
                     <th>Payment Method</th>
                     <th>Billing Staff</th>
-                    <th>Receipt Number</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -580,7 +699,6 @@ function BillingDashboard() {
                       <td>{bill.final_amount}</td>
                       <td>{bill.payment_method || 'N/A'}</td>
                       <td>{bill.billing_staff_name || 'N/A'}</td>
-                      <td>{bill.receipt_number || 'N/A'}</td>
                       <td>
                         {bill.is_paid && (
                           <button onClick={() => generateMedicalAbstract(bill.patient_id, bill.visit_id)}>

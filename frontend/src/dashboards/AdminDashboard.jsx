@@ -1,16 +1,39 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
 import DashboardLayout from "../components/DashboardLayout";
+import axios from "axios";
+import { jwtDecode } from "jwt-decode";
 
-const roles = ["admin", "nurse", "doctor", "billing_staff"];
-const reportPeriods = ["weekly", "monthly", "yearly"];
+const API_BASE_URL = "http://localhost:5000/api";
 
 function AdminDashboard() {
   const navigate = useNavigate();
   const [mainTab, setMainTab] = useState("system_reports");
   const [reportPeriod, setReportPeriod] = useState("weekly");
-  const [userCategory, setUserCategory] = useState("nurse");
+  const [reportPeriods] = useState(["weekly", "monthly", "yearly"]);
+  const [reportData, setReportData] = useState({
+    totalPatients: 0,
+    totalVisits: 0,
+    totalBills: 0,
+    totalTreatments: 0,
+    totalAmountCollected: 0,
+    averageBillAmount: 0,
+    commonTreatments: [],
+    commonDiagnoses: [],
+  });
+  const [loadingReports, setLoadingReports] = useState(false);
+  const [errorReports, setErrorReports] = useState(null);
+
+  const [users, setUsers] = useState({
+    admin: [],
+    nurse: [],
+    doctor: [],
+    billing_staff: [],
+  });
+  const [userCategory, setUserCategory] = useState("admin");
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [errorUsers, setErrorUsers] = useState(null);
+
   const [createUserCategory, setCreateUserCategory] = useState("nurse");
   const [newUser, setNewUser] = useState({
     username: "",
@@ -20,15 +43,9 @@ function AdminDashboard() {
     specialty: "",
     role: "nurse",
   });
-  const [users, setUsers] = useState({
-    admin: [],
-    nurse: [],
-    doctor: [],
-    billing_staff: [],
-  });
-  const [loadingUsers, setLoadingUsers] = useState(true);
-  const [errorUsers, setErrorUsers] = useState(null);
   const [creatingUser, setCreatingUser] = useState(false);
+
+  const roles = ["admin", "nurse", "doctor", "billing_staff"];
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -36,15 +53,15 @@ function AdminDashboard() {
       setErrorUsers(null);
       try {
         const token = localStorage.getItem("token");
-        const response = await axios.get(`http://localhost:5000/api/users?role=${userCategory}`, {
+        const response = await axios.get(`${API_BASE_URL}/users?role=${userCategory}`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
-        setUsers(prevUsers => ({ ...prevUsers, [userCategory]: response.data }));
+        setUsers((prevUsers) => ({ ...prevUsers, [userCategory]: response.data }));
       } catch (error) {
-        console.error(`Error fetching ${userCategory} users:`, error);
-        setErrorUsers(`Failed to load ${userCategory} users.`);
+        console.error("Error fetching users:", error);
+        setErrorUsers("Failed to load user accounts.");
       } finally {
         setLoadingUsers(false);
       }
@@ -55,11 +72,47 @@ function AdminDashboard() {
     }
   }, [userCategory, mainTab]);
 
-  const analytics = {
-    weekly: { totalPatients: 10, treatments: [{ name: "X-Ray", count: 3 }], diagnoses: [{ name: "Flu", count: 2 }] },
-    monthly: { totalPatients: 40, treatments: [{ name: "X-Ray", count: 12 }], diagnoses: [{ name: "Flu", count: 8 }] },
-    yearly: { totalPatients: 500, treatments: [{ name: "X-Ray", count: 120 }], diagnoses: [{ name: "Flu", count: 80 }] },
-  };
+  useEffect(() => {
+    const fetchReports = async () => {
+      setLoadingReports(true);
+      setErrorReports(null);
+      try {
+        const token = localStorage.getItem("token");
+        const response = await axios.get(`${API_BASE_URL}/admin/system-reports?period=${reportPeriod}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        setReportData({
+          totalPatients: response.data.totalPatients || 0,
+          totalVisits: response.data.totalVisits || 0,
+          totalBills: response.data.totalBills || 0,
+          totalTreatments: response.data.totalTreatments || 0,
+          totalAmountCollected: parseFloat(response.data.totalAmountCollected) || 0,
+          averageBillAmount: parseFloat(response.data.averageBillAmount) || 0,
+          commonTreatments: response.data.commonTreatments || [],
+          commonDiagnoses: response.data.commonDiagnoses || [],
+        });
+      } catch (error) {
+        console.error("Error fetching system reports:", error);
+        setErrorReports("Failed to load system reports.");
+      } finally {
+        setLoadingReports(false);
+      }
+    };
+
+    let intervalId;
+    if (mainTab === "system_reports") {
+      fetchReports();
+      intervalId = setInterval(fetchReports, 60000);
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [reportPeriod, mainTab]);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -82,14 +135,14 @@ function AdminDashboard() {
     try {
       const token = localStorage.getItem("token");
       await axios.post(
-        "http://localhost:5000/api/register",
+        `${API_BASE_URL}/register`,
         { ...newUser },
         { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } }
       );
       alert("User created successfully!");
       setNewUser({ username: "", password: "", full_name: "", contact_info: "", specialty: "", role: createUserCategory });
       const tokenRefresh = localStorage.getItem("token");
-      const response = await axios.get(`http://localhost:5000/api/users?role=${createUserCategory}`, {
+      const response = await axios.get(`${API_BASE_URL}/users?role=${createUserCategory}`, {
         headers: {
           Authorization: `Bearer ${tokenRefresh}`,
         },
@@ -110,6 +163,104 @@ function AdminDashboard() {
 
   const createButtonOptions = roles.map(r => ({ value: r, label: r.charAt(0).toUpperCase() + r.slice(1).replace("_", " ") }));
 
+  const handlePrintReport = () => {
+    if (!reportData) {
+      alert("No report data to print.");
+      return;
+    }
+
+    const printContent = `
+      <html>
+        <head>
+          <title>System Report - ${reportPeriod.charAt(0).toUpperCase() + reportPeriod.slice(1)}</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
+            h1, h2, h3, h4 { color: #0056b3; }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+            .header h1 { margin: 0; font-size: 24px; }
+            .header p { margin: 5px 0; color: #666; }
+            .section { margin-bottom: 20px; padding: 15px; border: 1px solid #eee; border-radius: 8px; background-color: #f9f9f9; }
+            .section-title { font-size: 18px; margin-bottom: 15px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
+            .data-item { margin-bottom: 8px; }
+            .data-item b { display: inline-block; width: 180px; }
+            .list-container { margin-left: 20px; }
+            .list-container ul { list-style-type: disc; padding: 0; margin: 0; }
+            .list-container li { margin-bottom: 5px; }
+            .placeholder-text { font-style: italic; color: #777; margin-top: 10px; }
+            @media print {
+              button { display: none; }
+              body { margin: 0; }
+              .header { border-bottom: none; }
+              .section { border: none; padding: 0; background-color: transparent; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>Hospital Management System</h1>
+            <p>Comprehensive System Report</p>
+            <p>Period: ${reportPeriod.charAt(0).toUpperCase() + reportPeriod.slice(1)}</p>
+            <p>Generated On: ${new Date().toLocaleDateString()}</p>
+          </div>
+
+          <div class="section">
+            <h2 class="section-title">Executive Summary</h2>
+            <p class="placeholder-text">This section provides a high-level overview of the key findings and highlights from the system's performance over the selected period. It summarizes patient engagement, operational efficiency, and financial health, pointing out major successes and areas for improvement. This acts as a quick reference for administrators and stakeholders.</p>
+          </div>
+
+          <div class="section">
+            <h2 class="section-title">Key Metrics Overview</h2>
+            <div class="data-item"><b>Total Patients:</b> ${reportData.totalPatients}</div>
+            <div class="data-item"><b>Total Visits:</b> ${reportData.totalVisits}</div>
+            <div class="data-item"><b>Total Bills Generated:</b> ${reportData.totalBills}</div>
+            <div class="data-item"><b>Total Treatments Provided:</b> ${reportData.totalTreatments}</div>
+            <div class="data-item"><b>Total Amount Collected:</b> ${reportData.totalAmountCollected.toFixed(2)}</div>
+            <div class="data-item"><b>Average Bill Amount:</b> ${reportData.averageBillAmount.toFixed(2)}</div>
+          </div>
+
+          <div class="section">
+            <h2 class="section-title">Operational Highlights</h2>
+            <p class="placeholder-text">Detailed insights into daily operations, including patient flow efficiency, staff workload, and resource utilization. This section could include data on average waiting times, doctor consultation durations, and administrative processing times, aiming to identify bottlenecks and optimize workflows.</p>
+            <div class="list-container">
+              <h3>Most Common Treatments:</h3>
+              ${reportData.commonTreatments && reportData.commonTreatments.length > 0 ? `
+                <ul>
+                  ${reportData.commonTreatments.map(t => `<li>${t.name} (${t.count} times)</li>`).join('')}
+                </ul>
+              ` : '<p>No common treatments data.</p>'}
+            </div>
+            <div class="list-container" style="margin-top: 20px;">
+              <h3>Most Common Diagnoses:</h3>
+              ${reportData.commonDiagnoses && reportData.commonDiagnoses.length > 0 ? `
+                <ul>
+                  ${reportData.commonDiagnoses.map(d => `<li>${d.name} (${d.count} times)</li>`).join('')}
+                </ul>
+              ` : '<p>No common diagnoses data.</p>'}
+            </div>
+          </div>
+
+          <div class="section">
+            <h2 class="section-title">Financial Overview</h2>
+            <p class="placeholder-text">An in-depth look at the financial performance of the hospital, covering revenue streams, expenditure analysis, and profitability. This might include details on outstanding payments, insurance claims processing, and budget adherence, providing a clear picture of the hospital's financial health.</p>
+          </div>
+
+          <div class="section">
+            <h2 class="section-title">Recommendations and Future Outlook</h2>
+            <p class="placeholder-text">Based on the analysis, this section outlines strategic recommendations for improving hospital services, operational efficiency, and financial stability. It also includes a forward-looking perspective on potential growth areas, technological adoptions, and patient care enhancements.</p>
+          </div>
+
+        </body>
+      </html>
+    `;
+
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(printContent);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    printWindow.close();
+  };
+
   return (
     <DashboardLayout
       title="PATIENT BILLING MANAGEMENT SYSTEM"
@@ -122,7 +273,10 @@ function AdminDashboard() {
       onCreateSelectChange={e => { setMainTab("create_user"); setCreateUserCategory(e.target.value); setNewUser(u => ({ ...u, role: e.target.value })); }}
       onLogout={handleLogout}
     >
-      {mainTab === "system_reports" && (
+      {loadingReports && <div className="loading">Loading reports...</div>}
+      {errorReports && <div className="error">Error: {errorReports}</div>}
+
+      {mainTab === "system_reports" && reportData && !loadingReports && !errorReports && (
         <>
           <div style={{ fontWeight: 600, marginBottom: 8, fontSize: "clamp(1.1rem, 2vw, 1.3rem)" }}>System Reports</div>
           <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
@@ -131,19 +285,36 @@ function AdminDashboard() {
             ))}
           </div>
           <div style={{ minHeight: 200, padding: 24, background: "#f5fafd", borderRadius: 8, fontSize: 22, fontWeight: 600, color: "#222", textAlign: "center", width: "100%", boxSizing: "border-box" }}>
-            <div style={{ fontSize: 28, marginBottom: 16 }}>Display Reports Here</div>
             <div style={{ textAlign: "left", fontSize: 16 }}>
-              <div><b>Total Patients:</b> {analytics[reportPeriod].totalPatients}</div>
+              <div style={{ marginBottom: 12 }}><b>Total Patients:</b> {reportData.totalPatients}</div>
+              <div style={{ marginBottom: 12 }}><b>Total Visits:</b> {reportData.totalVisits}</div>
+              <div style={{ marginBottom: 12 }}><b>Total Bills:</b> {reportData.totalBills}</div>
+              <div style={{ marginBottom: 12 }}><b>Total Treatments:</b> {reportData.totalTreatments}</div>
+              <div style={{ marginBottom: 12 }}><b>Total Amount Collected:</b> {reportData.totalAmountCollected.toFixed(2)}</div>
+              <div style={{ marginBottom: 12 }}><b>Average Bill Amount:</b> {reportData.averageBillAmount.toFixed(2)}</div>
               <div style={{ marginTop: 12 }}><b>Most Common Treatments:</b>
-                <ul>{analytics[reportPeriod].treatments.map(t => <li key={t.name}>{t.name} ({t.count})</li>)}</ul>
+                {reportData.commonTreatments && reportData.commonTreatments.length > 0 ? (
+                  <ul>{reportData.commonTreatments.map(t => <li key={t.name}>{t.name} ({t.count})</li>)}</ul>
+                ) : (
+                  <p>No common treatments found.</p>
+                )}
               </div>
               <div style={{ marginTop: 12 }}><b>Most Common Diagnoses:</b>
-                <ul>{analytics[reportPeriod].diagnoses.map(d => <li key={d.name}>{d.name} ({d.count})</li>)}</ul>
+                {reportData.commonDiagnoses && reportData.commonDiagnoses.length > 0 ? (
+                  <ul>{reportData.commonDiagnoses.map(d => <li key={d.name}>{d.name} ({d.count})</li>)}</ul>
+                ) : (
+                  <p>No common diagnoses found.</p>
+                )}
               </div>
             </div>
           </div>
           <div style={{ textAlign: "right", marginTop: 16 }}>
-            <button style={{ background: "#2196f3", color: "#fff", fontWeight: 600, padding: "8px 24px", border: 0, borderRadius: 4, fontSize: "clamp(1rem, 2vw, 1.1rem)" }}>PRINT</button>
+            <button 
+              onClick={handlePrintReport} 
+              style={{ background: "#2196f3", color: "#fff", fontWeight: 600, padding: "8px 24px", border: 0, borderRadius: 4, fontSize: "clamp(1rem, 2vw, 1.1rem)" }}
+            >
+              PRINT
+            </button>
           </div>
         </>
       )}
@@ -164,27 +335,27 @@ function AdminDashboard() {
                   <tr style={{ background: "#e3f0fa" }}>
                     <th style={{ padding: 8, border: "1px solid #b3d1e6" }}>ID</th>
                     <th style={{ padding: 8, border: "1px solid #b3d1e6" }}>Username</th>
-                    <th style={{ padding: 8, border: "1px solid #b3d1e6" }}>Full Name</th>
+                    {userCategory !== "admin" && <th style={{ padding: 8, border: "1px solid #b3d1e6" }}>Full Name</th>}
                     {userCategory === "doctor" && <th style={{ padding: 8, border: "1px solid #b3d1e6" }}>Specialty</th>}
-                    <th style={{ padding: 8, border: "1px solid #b3d1e6" }}>Contact Info</th>
+                    {userCategory !== "admin" && <th style={{ padding: 8, border: "1px solid #b3d1e6" }}>Contact Info</th>}
                     <th style={{ padding: 8, border: "1px solid #b3d1e6" }}>Date Created</th>
                   </tr>
                 </thead>
                 <tbody>
                   {users[userCategory] && users[userCategory].length > 0 ? (
                     users[userCategory].map(user => (
-                      <tr key={user.staff_id || user.username}>
-                        <td style={{ padding: 8, border: "1px solid #b3d1e6" }}>{user.staff_id}</td>
+                      <tr key={user.user_id || user.staff_id || user.username}>
+                        <td style={{ padding: 8, border: "1px solid #b3d1e6" }}>{user.user_id || user.staff_id}</td>
                         <td style={{ padding: 8, border: "1px solid #b3d1e6" }}>{user.username}</td>
-                        <td style={{ padding: 8, border: "1px solid #b3d1e6" }}>{user.full_name}</td>
+                        {userCategory !== "admin" && <td style={{ padding: 8, border: "1px solid #b3d1e6" }}>{user.full_name}</td>}
                         {userCategory === "doctor" && <td style={{ padding: 8, border: "1px solid #b3d1e6" }}>{user.specialty}</td>}
-                        <td style={{ padding: 8, border: "1px solid #b3d1e6" }}>{user.contact_info}</td>
+                        {userCategory !== "admin" && <td style={{ padding: 8, border: "1px solid #b3d1e6" }}>{user.contact_info}</td>}
                         <td style={{ padding: 8, border: "1px solid #b3d1e6" }}>{new Date(user.date_created).toLocaleDateString()}</td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={userCategory === "doctor" ? 6 : 5} style={{ padding: 8, textAlign: "center" }}>No {userCategory} users found.</td>
+                      <td colSpan={userCategory === "doctor" ? 6 : (userCategory === "admin" ? 3 : 5)} style={{ padding: 8, textAlign: "center" }}>No {userCategory} users found.</td>
                     </tr>
                   )}
                 </tbody>

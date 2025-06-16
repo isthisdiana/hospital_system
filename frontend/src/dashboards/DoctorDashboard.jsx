@@ -7,9 +7,23 @@ import {
   TextField,
   Box,
   Button,
+  Grid,
+  MenuItem,
+  IconButton,
+  Select,
+  InputAdornment,
+  TableContainer,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
 } from "@mui/material";
 import axios from "axios";
 import { jwtDecode } from "jwt-decode";
+import SearchIcon from '@mui/icons-material/Search';
+import AddIcon from '@mui/icons-material/Add';
+import RemoveIcon from '@mui/icons-material/Remove';
 // import "./DoctorDashboard.css"; // Commented out as styles are now in DashboardLayout.css
 
 function DoctorDashboard() {
@@ -31,11 +45,14 @@ function DoctorDashboard() {
     cost: "",
     treatment_description: "",
   });
-  const [logTreatmentDetails, setLogTreatmentDetails] = useState({
+  const [currentTreatmentInput, setCurrentTreatmentInput] = useState({
     name: "",
-    cost: "",
+    cost: 0,
     description: "",
+    quantity: 1,
+    subtotal: 0,
   });
+  const [addedTreatments, setAddedTreatments] = useState([]);
   const [newDiagnosis, setNewDiagnosis] = useState("");
   const [isEditingPatient, setIsEditingPatient] = useState(false);
   const [editPatientData, setEditPatientData] = useState(null);
@@ -50,6 +67,7 @@ function DoctorDashboard() {
   const [reportPeriods] = useState(["weekly", "monthly", "yearly"]);
   const [patientReports, setPatientReports] = useState({
     totalPatients: 0,
+    periodVisits: 0,
     treatments: [],
     diagnoses: [],
   });
@@ -60,6 +78,7 @@ function DoctorDashboard() {
 
   const getAuthHeaders = () => {
     const token = localStorage.getItem('token');
+    console.log("Token from localStorage in getAuthHeaders:", token);
     return {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -71,10 +90,11 @@ function DoctorDashboard() {
       setLoading(true);
       setError(null);
       try {
+        await fetchAllTreatments(); // Always fetch all treatments on component mount
         if (activeView === 'assignedPatients') {
           await fetchPendingTreatmentVisits();
         } else if (activeView === 'availableTreatments') {
-          await fetchAllTreatments();
+          // fetchAllTreatments is already called above, so no need to call again here
         } else if (activeView === 'patientReports') {
           await fetchPatientReports(reportPeriod);
         }
@@ -84,7 +104,20 @@ function DoctorDashboard() {
         setLoading(false);
       }
     };
-    fetchInitialData();
+
+    let intervalId;
+    if (activeView === 'patientReports') {
+      fetchPatientReports(reportPeriod); // Initial fetch
+      intervalId = setInterval(() => fetchPatientReports(reportPeriod), 60000); // Auto-update every 60 seconds
+    } else {
+      fetchInitialData(); // For other views, retain original fetch behavior
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
   }, [activeView, reportPeriod]);
 
   const fetchPendingTreatmentVisits = async () => {
@@ -109,24 +142,17 @@ function DoctorDashboard() {
   };
 
   const fetchAllTreatments = async () => {
+    console.log("Attempting to fetch all treatments...");
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/treatments`, {
-        headers: getAuthHeaders(),
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
-      const formattedTreatments = data.map(treatment => ({
-        ...treatment,
-        price: treatment.cost,
-        purpose: treatment.treatment_description,
-      }));
-      setAllTreatments(formattedTreatments);
-    } catch (err) {
-      console.error("Error fetching treatments:", err);
+      const headers = getAuthHeaders();
+      console.log("Headers being sent with treatments request:", headers);
+      const res = await axios.get(`${API_BASE_URL}/treatments`, { headers: headers });
+      setAllTreatments(res.data);
+      console.log("Fetched all treatments:", res.data);
+    } catch (error) {
+      console.error("Error fetching treatments:", error);
       setError("Error fetching available treatments.");
       setAllTreatments([]);
     } finally {
@@ -148,10 +174,11 @@ function DoctorDashboard() {
       }
       
       const data = await response.json();
-      console.log('Fetched patient reports:', data); // Debug log
+      console.log('Frontend - Fetched patient reports RAW data:', data); // Debug log to see raw data
       
       setPatientReports({
         totalPatients: data.totalPatients || 0,
+        periodVisits: data.periodVisits || 0,
         treatments: data.treatments || [],
         diagnoses: data.diagnoses || []
       });
@@ -160,6 +187,7 @@ function DoctorDashboard() {
       setError(err.message || "Error fetching patient reports.");
       setPatientReports({
         totalPatients: 0,
+        periodVisits: 0,
         treatments: [],
         diagnoses: []
       });
@@ -208,7 +236,7 @@ function DoctorDashboard() {
       const staffId = decodedToken.staffId;
       
       const response = await fetch(
-        `${API_BASE_URL}/patients?search=${encodeURIComponent(searchTerm.trim())}&doctor_id=${staffId}`,
+        `${API_BASE_URL}/patients?search=${encodeURIComponent(searchTerm.trim())}`,
         {
           headers: getAuthHeaders(),
         }
@@ -222,7 +250,12 @@ function DoctorDashboard() {
         setError("No patients found matching your search.");
         setAllPatients([]);
       } else {
-        setAllPatients(data);
+        // Map over the data to ensure each patient object has a 'full_name' property
+        const formattedPatients = data.map(patient => ({
+          ...patient,
+          full_name: patient.full_name || `${patient.first_name || ''} ${patient.last_name || ''}`.trim(),
+        }));
+        setAllPatients(formattedPatients);
         handleNavigation('allPatientsSearch');
       }
     } catch (err) {
@@ -239,7 +272,8 @@ function DoctorDashboard() {
     
     setLoading(true);
     setError(null);
-    setLogTreatmentDetails({ name: "", cost: "", description: "" });
+    setCurrentTreatmentInput({ name: "", cost: 0, description: "", quantity: 1, subtotal: 0 });
+    setAddedTreatments([]);
     setNewDiagnosis("");
     setShowBillingSlip(false);
     setShowMedicalAbstract(false);
@@ -264,7 +298,7 @@ function DoctorDashboard() {
           // Ensure date_of_birth is in YYYY-MM-DD format for input type="date"
           date_of_birth: data.dob ? new Date(data.dob).toISOString().split('T')[0] : '',
           // Ensure all fields have a fallback empty string to prevent uncontrolled input warnings
-          full_name: data.full_name || patient.full_name || `${patient.first_name || ''} ${patient.last_name || ''}`.trim(),
+          full_name: data.full_name || '', // Keep for display
           gender: data.gender || '',
           contact_no: data.contact_info || '',
           philhealth_no: data.philhealth_id || '',
@@ -275,11 +309,25 @@ function DoctorDashboard() {
           // Directly use the visits array from the backend, which now includes treatments
           visits: data.visits || []
       };
+
+      // Log the visits data specifically
+      console.log("Frontend - Formatted visits data for selected patient:", formattedData.visits);
+
+      // For editing, split full_name into first and last name
+      const nameParts = (formattedData.full_name || '').split(' ');
+      const firstNameForEdit = nameParts.slice(0, -1).join(' ');
+      const lastNameForEdit = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
       
       console.log("Formatted patient data for selectedPatient:", formattedData); // New debug log
+      console.log("Frontend - Visits array in formattedData:", formattedData.visits); // Detailed log for visits
       
       setSelectedPatient(formattedData);
-      setEditPatientData(formattedData);
+      setEditPatientData({
+        ...formattedData,
+        full_name: undefined, // Remove full_name from edit data
+        first_name: firstNameForEdit,
+        last_name: lastNameForEdit,
+      });
       setSelectedVisitId(visitId);
 
       const paymentResponse = await fetch(`${API_BASE_URL}/patient/${patient.patient_id}/payment-status`, {
@@ -304,20 +352,77 @@ function DoctorDashboard() {
 
   const handleTreatmentChange = (e) => {
     const { name, value } = e.target;
-    console.log(`Input field ${name} changed to: ${value}`);
-    setLogTreatmentDetails(prev => {
+    console.log(`Input changed: ${name}, Value: '${value}'`); // Debug log, single quotes to show whitespace
+    console.log("allTreatments array in handleTreatmentChange:", allTreatments); // Check if allTreatments is populated
+    setCurrentTreatmentInput(prev => {
       const newState = { ...prev, [name]: value };
+
       if (name === "name" && value.trim() !== "") {
         const matchedTreatment = allTreatments.find(
-          (t) => t.treatment_name.toLowerCase() === value.toLowerCase()
+          (t) => {
+            console.log(`Comparing '${t.treatment_name.toLowerCase()}' with '${value.toLowerCase()}'`); // Detail comparison
+            return t.treatment_name.toLowerCase() === value.toLowerCase();
+          }
         );
+        console.log("Matched treatment:", matchedTreatment); // Log the result of find
         if (matchedTreatment) {
-          newState.cost = matchedTreatment.price;
-          newState.description = matchedTreatment.purpose;
+          newState.cost = parseFloat(matchedTreatment.cost); // Ensure cost is a number
+          newState.description = matchedTreatment.treatment_description;
+          newState.treatment_id = matchedTreatment.treatment_id;
+        } else {
+          // If no match, clear cost and description and reset subtotal
+          newState.cost = 0;
+          newState.description = "";
+          newState.treatment_id = null;
         }
       }
+
+      // Always recalculate subtotal when relevant fields change or are autofilled
+      const currentCost = parseFloat(newState.cost || 0);
+      const currentQuantity = parseInt(newState.quantity || 0);
+      newState.subtotal = currentCost * currentQuantity;
+      
+      console.log("New State after change:", newState); // Debug log for new state
       return newState;
     });
+  };
+
+  const handleDecrementQuantity = () => {
+    setCurrentTreatmentInput((prev) => {
+      const newQuantity = Math.max(1, (prev.quantity || 0) - 1);
+      const newSubtotal = parseFloat(prev.cost || 0) * newQuantity;
+      return {
+        ...prev,
+        quantity: newQuantity,
+        subtotal: newSubtotal,
+      };
+    });
+  };
+
+  const handleIncrementQuantity = () => {
+    setCurrentTreatmentInput((prev) => {
+      const newQuantity = (prev.quantity || 0) + 1;
+      const newSubtotal = parseFloat(prev.cost || 0) * newQuantity;
+      return {
+        ...prev,
+        quantity: newQuantity,
+        subtotal: newSubtotal,
+      };
+    });
+  };
+
+  const handleAddTreatmentToList = () => {
+    if (!currentTreatmentInput.name || !currentTreatmentInput.cost || !currentTreatmentInput.quantity || !currentTreatmentInput.treatment_id) {
+      alert("Please fill in all treatment details (Name, Cost, Quantity).");
+      return;
+    }
+
+    setAddedTreatments(prev => [...prev, currentTreatmentInput]);
+    setCurrentTreatmentInput({ name: "", cost: 0, description: "", quantity: 1, subtotal: 0, treatment_id: null });
+  };
+
+  const handleRemoveTreatment = (indexToRemove) => {
+    setAddedTreatments(prev => prev.filter((_, index) => index !== indexToRemove));
   };
 
   const handleAddAvailableTreatment = async () => {
@@ -359,15 +464,14 @@ function DoctorDashboard() {
       return;
     }
 
-    // Capture the current single treatment to be logged
-    const treatmentToLog = {
-      name: logTreatmentDetails.name,
-      cost: parseFloat(logTreatmentDetails.cost),
-      description: logTreatmentDetails.description,
-    };
+    if (addedTreatments.length === 0) {
+      setError("Please add at least one treatment.");
+      setLoading(false);
+      return;
+    }
 
-    if (!treatmentToLog.name || isNaN(treatmentToLog.cost) || !newDiagnosis.trim()) {
-      setError("Please fill in all fields for treatment and diagnosis (Name, Cost, Diagnosis).");
+    if (!newDiagnosis.trim()) {
+      setError("Please provide a diagnosis.");
       setLoading(false);
       return;
     }
@@ -379,7 +483,10 @@ function DoctorDashboard() {
         {
           patient_id: selectedPatient.patient_id,
           visit_id: selectedVisitId,
-          treatments: [treatmentToLog], // Send as an array containing the single treatment
+          treatments: addedTreatments.map(t => ({ // Send the array of added treatments
+            treatment_id: t.treatment_id,
+            quantity: t.quantity,
+          })),
           diagnosis: newDiagnosis,
         },
         {
@@ -391,15 +498,17 @@ function DoctorDashboard() {
       );
 
       if (response.status === 201) {
-        alert("Treatment and diagnosis logged successfully!");
+        alert("Treatments and diagnosis logged successfully!");
         // After successfully logging treatments and diagnosis, generate the bill
         await generateBilling(selectedVisitId, selectedPatient.patient_id);
         fetchPendingTreatmentVisits();
-        setLogTreatmentDetails({ name: "", cost: "", description: "" }); // Clear treatment form
+        // Re-fetch patient details to update displayed billing information
+        await handleSelectPatient(selectedPatient, selectedVisitId);
+        // Also re-fetch patient reports to ensure they are up-to-date
+        await fetchPatientReports(reportPeriod);
+        setCurrentTreatmentInput({ name: "", cost: 0, description: "", quantity: 1, subtotal: 0, treatment_id: null }); // Clear current input
+        setAddedTreatments([]); // Clear added treatments list
         setNewDiagnosis(""); // Clear diagnosis form
-        setSelectedPatient(null); // Clear selected patient
-        setSelectedVisitId(null); // Clear selected visit
-        handleNavigation('assignedPatients'); // Go back to the assigned patients view
       } else {
         setError(response.data.message || "Failed to log treatment and diagnosis.");
       }
@@ -441,7 +550,16 @@ function DoctorDashboard() {
   const handleEditPatient = () => {
     // Ensure we are in the patientRecord view before showing the edit form
     handleNavigation('patientRecord');
-    setEditPatientData({ ...selectedPatient });
+    // Prepare editPatientData with first and last names for the form
+    const nameParts = (selectedPatient.full_name || '').split(' ');
+    const firstName = nameParts.slice(0, -1).join(' ');
+    const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
+
+    setEditPatientData({
+      ...selectedPatient,
+      first_name: firstName,
+      last_name: lastName,
+    });
     setIsEditingPatient(true);
   };
 
@@ -458,7 +576,8 @@ function DoctorDashboard() {
         method: 'PUT',
         headers: getAuthHeaders(),
         body: JSON.stringify({
-          full_name: editPatientData.full_name,
+          pfirst_name: editPatientData.first_name,
+          plast_name: editPatientData.last_name,
           dob: editPatientData.date_of_birth,
           gender: editPatientData.gender,
           contact_info: editPatientData.contact_no,
@@ -490,7 +609,7 @@ function DoctorDashboard() {
     setShowVisitHistory(true);
   };
 
-  const generateBillingSlip = (visitIdToGenerate) => {
+  const generateBillingSlip = async (visitIdToGenerate) => {
     console.log("generateBillingSlip called.");
     console.log("selectedPatient:", selectedPatient);
     console.log("visitIdToGenerate:", visitIdToGenerate);
@@ -498,20 +617,35 @@ function DoctorDashboard() {
     if (selectedPatient && visitIdToGenerate) {
       const visit = selectedPatient.visits.find(v => v.visit_id === visitIdToGenerate);
       console.log("Found visit in selectedPatient.visits:", visit);
-      if (visit) {
-        // Generate a simple placeholder billing ID for now
-        const billingId = `BILL-${Math.floor(1000 + Math.random() * 9000)}`;
+      if (visit && visit.billing_id) {
+        setLoading(true);
+        setError(null);
+        try {
+          const token = localStorage.getItem("token");
+          const response = await axios.get(
+            `${API_BASE_URL}/billing/${visit.billing_id}`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+            }
+          );
 
-        setBillingSlipData({
-          billing_id: billingId,
-          visit_id: visit.visit_id,
-          patient_name: selectedPatient.full_name,
-          visit_purpose: visit.visit_purpose,
-          visit_date: visit.visit_date,
-        });
-        setShowBillingSlip(true);
+          if (response.status === 200) {
+            setBillingSlipData(response.data);
+            setShowBillingSlip(true);
+          } else {
+            setError(response.data.message || "Failed to generate billing slip.");
+          }
+        } catch (err) {
+          console.error("Error generating billing slip:", err);
+          setError(err.response?.data?.message || err.message || "Failed to generate billing slip.");
+        } finally {
+          setLoading(false);
+        }
       } else {
-        alert("Visit details not found for the selected visit ID.");
+        alert("Visit details or Billing ID not found for the selected visit ID. Please ensure the visit is billed.");
       }
     } else {
       alert("Please select a patient and a visit to generate a billing slip.");
@@ -646,81 +780,205 @@ function DoctorDashboard() {
       printWindow.document.write('<html><head><title>Medical Abstract</title>');
       printWindow.document.write(`
         <style>
-          body { font-family: 'Times New Roman', serif; margin: 40px; background-color: #f8f8f8; }
+          body { font-family: 'Arial', sans-serif; margin: 20px; background-color: #ffffff; color: #333; }
           .medical-abstract-preview {
             font-size: 1em;
-            padding: 50px; /* Increased padding */
-            border: 6px solid #004d40; /* Slightly thicker solid border */
-            border-radius: 12px; /* More rounded corners */
+            padding: 30px;
+            border: 1px solid #ccc;
             text-align: left;
             margin: 0 auto;
-            max-width: 850px; /* Slightly wider */
-            box-shadow: 0 0 20px rgba(0,0,0,0.3); /* Stronger shadow */
+            max-width: 800px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
             background-color: #ffffff;
-            position: relative;
-            background-image: linear-gradient(to bottom, #fefefe, #ffffff); /* Subtle gradient */
           }
-          .medical-abstract-preview h3 {
-            font-size: 3em; /* Slightly larger */
-            color: #004d40;
-            margin-bottom: 30px; /* Increased margin */
-            text-transform: uppercase;
-            letter-spacing: 2px; /* Increased letter spacing */
+          .header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #0056b3; /* Blue border for a professional look */
+          }
+          .logo {
+            width: 80px;
+            height: 80px;
+            border: 2px solid #0056b3;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8em;
+            font-weight: bold;
+            color: #0056b3;
+            margin-right: 20px;
+            flex-shrink: 0;
             text-align: center;
-            border-bottom: 3px double #004d40; /* Double underline for heading */
-            padding-bottom: 15px; /* Increased padding */
+            line-height: 1.2;
+            overflow: hidden; /* Ensure text doesn't overflow */
+            white-space: pre-wrap; /* Allow line breaks */
           }
-          .abstract-content {
-            margin-top: 30px; /* Increased margin */
-            border: none; /* Remove subtle border, rely on field borders */
-            padding: 0; /* Remove padding here */
-            border-radius: 0;
-            background-color: transparent; /* Transparent background */
+          .header-info {
+            flex-grow: 1;
+          }
+          .header-info h1 {
+            font-size: 1.8em;
+            color: #0056b3;
+            margin: 0;
+            margin-bottom: 5px;
+          }
+          .header-info p {
+            font-size: 0.8em;
+            margin: 0;
+            color: #555;
+          }
+          .abstract-title {
+            font-size: 1.6em;
+            text-align: center;
+            color: #0056b3;
+            margin-bottom: 25px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #ddd;
+            text-transform: uppercase;
+          }
+          .section-title {
+            font-size: 1.2em;
+            color: #0056b3;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 5px;
           }
           .abstract-content p {
-            display: flex; /* Use flexbox for label-value alignment */
-            margin: 15px 0; /* Increased margin */
-            line-height: 1.8;
-            font-size: 1.1em; /* Slightly larger font for fields */
-            padding: 8px 0; /* Padding for each field */
-            border-bottom: 1px solid #ccc; /* Solid line for each field */
-            align-items: baseline; /* Align text baselines */
+            display: flex;
+            margin: 10px 0;
+            line-height: 1.5;
+            font-size: 0.95em;
+            border-bottom: 1px dashed #eee;
+            padding-bottom: 5px;
           }
           .abstract-content p:last-child { border-bottom: none; }
           .abstract-content strong {
-            font-size: 1em; /* Keep relative to parent p font-size */
+            font-size: 0.95em;
             color: #222;
             display: inline-block;
-            min-width: 180px; /* Wider min-width for labels */
+            min-width: 150px;
             font-weight: bold;
-            text-transform: capitalize; /* Capitalize labels */
-            flex-shrink: 0; /* Prevent label from shrinking */
-            margin-right: 15px; /* Space between label and value */
+            margin-right: 10px;
+            flex-shrink: 0;
           }
           .medical-history {
-            margin-top: 40px; /* Increased margin */
-            padding-top: 25px; /* Increased padding */
-            border-top: 3px solid #004d40; /* Thicker top border */
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ccc;
           }
-          .medical-history h4 { font-size: 2em; color: #004d40; margin-bottom: 20px; text-align: center; }
+          .medical-history h4 { font-size: 1.3em; color: #0056b3; margin-bottom: 15px; }
           .visit-summary {
-            border: 2px solid #e0e0e0; /* Thicker border */
-            padding: 20px; /* Increased padding */
-            margin-bottom: 25px; /* Increased margin */
-            border-radius: 8px; /* More rounded corners */
-            background-color: #fcfcfc; /* Lighter background */
-            box-shadow: 0 2px 5px rgba(0,0,0,0.05); /* Subtle shadow for each visit */
+            border: 1px solid #eee;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
           }
-          .visit-summary h5 { font-size: 1.6em; color: #333; margin-bottom: 15px; border-bottom: 1px dashed #bbb; padding-bottom: 8px; }
-          .visit-summary p { margin: 10px 0; font-size: 1em; }
-          .visit-summary strong { font-size: 1.1em; min-width: 120px; }
-          .treatments-list { margin-top: 15px; padding-left: 30px; }
-          .treatment-item { margin-bottom: 8px; border-left: 3px solid #b2dfdb; padding-left: 10px; } /* Highlight treatment items */
+          .visit-summary h5 { font-size: 1.1em; color: #444; margin-bottom: 10px; border-bottom: 1px dashed #ddd; padding-bottom: 5px; }
+          .visit-summary p { margin: 5px 0; font-size: 0.9em; }
+          .visit-summary strong { font-size: 0.9em; min-width: 100px; }
+          .treatments-list { margin-top: 10px; padding-left: 20px; }
+          .treatment-item { margin-bottom: 5px; border-left: 2px solid #a7d9f7; padding-left: 8px; }
           .abstract-actions { display: none !important; }
+          .signature-section {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #ccc;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+          }
+          .signature-section div {
+            width: 45%;
+          }
+          .signature-line {
+            border-bottom: 1px solid #000;
+            margin-top: 50px;
+            padding-bottom: 5px;
+            text-align: center;
+            font-size: 0.9em;
+          }
+          .date-line {
+            border-bottom: 1px solid #000;
+            margin-top: 50px;
+            padding-bottom: 5px;
+            text-align: center;
+            font-size: 0.9em;
+          }
         </style>
       `);
       printWindow.document.write('</head><body>');
-      printWindow.document.write(printContent.outerHTML);
+      printWindow.document.write(
+        `<div class="medical-abstract-preview">
+          <div class="header">
+            <div class="logo">GS<br/>HMC</div>
+            <div class="header-info">
+              <h1>Philippine General Hospital Memorial Center</h1>
+              <p>123 Medical Drive, Health City, CA 90210</p>
+              <p>Phone: (555) 123-4567 | Fax: (555) 123-4568</p>
+              <p>Email: info@greysloan.com | Web: www.greysloan.com</p>
+            </div>
+          </div>
+          <h2 class="abstract-title">Medical Abstract</h2>
+          <div class="abstract-content">
+            <p><strong>Patient Name:</strong> ${medicalAbstractData.patient_name}</p>
+            <p><strong>Patient ID:</strong> ${medicalAbstractData.patient_id}</p>
+            <p><strong>Date of Birth:</strong> ${medicalAbstractData.date_of_birth ? new Date(medicalAbstractData.date_of_birth).toLocaleDateString() : 'N/A'}</p>
+            <p><strong>Gender:</strong> ${medicalAbstractData.gender}</p>
+            <p><strong>Contact Info:</strong> ${medicalAbstractData.contact_info || 'N/A'}</p>
+            <p><strong>Address:</strong> 123 Main St, Anytown, USA 12345</p>
+            <p><strong>PhilHealth ID:</strong> ${medicalAbstractData.philhealth_id || 'PH12-34567890'}</p>
+            <p><strong>Admission Date:</strong> ${medicalAbstractData.admission_date ? new Date(medicalAbstractData.admission_date).toLocaleDateString() : 'N/A'}</p>
+            <p><strong>Discharge Date:</strong> ${medicalAbstractData.discharge_date ? new Date(medicalAbstractData.discharge_date).toLocaleDateString() : 'N/A'}</p>
+            <p><strong>Admitting Diagnosis:</strong> Placeholder admitting diagnosis details here. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
+            <p><strong>Final Diagnosis:</strong> Placeholder final diagnosis details here. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+            <p><strong>Chief Complaint:</strong> Placeholder chief complaint details here. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+          </div>
+          <div class="medical-history">
+            <h3 class="section-title">Medical History & Course of Treatment</h3>
+            ${medicalAbstractData.visit_history && medicalAbstractData.visit_history.length > 0 ? (
+              medicalAbstractData.visit_history.map(visit => `
+                <div class="visit-summary">
+                  <h5>Visit Date: ${new Date(visit.visit_date).toLocaleDateString()} (Visit ID: ${visit.visit_id})</h5>
+                  <p><strong>Doctor:</strong> ${visit.doctor_name || 'N/A'}</p>
+                  <p><strong>Purpose:</strong> ${visit.visit_purpose || 'N/A'}</p>
+                  <p><strong>Diagnosis:</strong> ${visit.diagnosis || 'No diagnosis recorded'}</p>
+                  <p><strong>Treatment Notes:</strong> ${visit.treatment_notes || 'No treatment notes'}</p>
+                  <p><strong>Total Amount:</strong> ${visit.total_amount ? visit.total_amount.toFixed(2) : '0.00'}</p>
+                  <p><strong>Payment Status:</strong> ${visit.is_paid ? 'Paid' : 'Unpaid'}</p>
+                  ${visit.treatments && visit.treatments.length > 0 ? (
+                    `<h5 style="margin-top: 15px;">Treatments Provided:</h5>
+                    <ul class="treatments-list">
+                      ${visit.treatments.map(treatment => `
+                        <li class="treatment-item">${treatment.name} (Qty: ${treatment.quantity}, Price: ${treatment.price.toFixed(2)})</li>
+                      `).join('')}
+                    </ul>`
+                  ) : ''}
+                </div>
+              `).join('')
+            ) : (
+              '<p>No visit history available.</p>'
+            )}
+          </div>
+          <div class="signature-section">
+            <div>
+              <p class="signature-line"></p>
+              <p style="text-align: center;">Attending Physician's Signature over Printed Name</p>
+            </div>
+            <div>
+              <p class="date-line">${new Date().toLocaleDateString()}</p>
+              <p style="text-align: center;">Date</p>
+            </div>
+          </div>
+          <p style="font-size: 0.7em; text-align: center; margin-top: 30px; color: #777;">
+            This abstract is for informational purposes only and does not constitute a medical recommendation.
+          </p>
+        </div>`
+      );
       printWindow.document.write('</body></html>');
       printWindow.document.close();
       printWindow.focus();
@@ -738,25 +996,34 @@ function DoctorDashboard() {
       printWindow.document.write('<html><head><title>Billing Slip</title>');
       printWindow.document.write(`
         <style>
-          body { font-family: Arial, sans-serif; margin: 20px; }
+          body { font-family: 'Consolas', 'Courier New', monospace; margin: 10px; font-size: 0.9em; }
           .billing-slip-preview {
-            border: 1px solid #ccc;
-            padding: 20px;
-            max-width: 400px;
-            margin: 0 auto;
-            font-size: 1.1em;
+            border: 1px dashed #aaa; /* Dashed border for a receipt feel */
+            padding: 10px; /* Reduced padding */
+            max-width: 280px; /* Narrower slip */
+            margin: 10px auto; /* Centered with a small margin */
+            font-size: 0.9em; /* Slightly smaller font for compactness */
+            background-color: #fffbf0; /* Off-white, paper-like background */
+            box-shadow: 0 0 5px rgba(0,0,0,0.1); /* Subtle shadow */
           }
           .billing-slip-preview h3 {
             text-align: center;
             color: #333;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
+            font-size: 1.1em; /* Smaller heading */
+            text-transform: uppercase;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
           }
           .billing-slip-preview p {
-            margin-bottom: 10px;
+            margin-bottom: 5px; /* Reduced margin between lines */
+            line-height: 1.3;
           }
           .billing-slip-preview strong {
             display: inline-block;
-            width: 120px;
+            width: 80px; /* Adjust width for key labels */
+            font-weight: normal; /* Less bold */
+            margin-right: 5px;
           }
           .abstract-actions, .billing-slip-preview button { display: none !important; } /* Hide buttons in print */
         </style>
@@ -795,7 +1062,7 @@ function DoctorDashboard() {
 
   return (
     <DashboardLayout
-      title="PATIENT BILLING MANAGEMENT SYSTEM"
+      title="DOCTOR DASHBOARD"
       navigationTabs={navigationTabs}
       currentTab={activeView}
       onTabChange={handleNavigation}
@@ -938,8 +1205,10 @@ function DoctorDashboard() {
             <div className="form-container">
               <h3>Edit Patient Information</h3>
               <form onSubmit={(e) => { e.preventDefault(); handleSavePatient(); }}>
-                <label>Full Name:</label>
-                <input type="text" name="full_name" value={editPatientData.full_name} onChange={handleEditPatientChange} required />
+                <label>First Name:</label>
+                <input type="text" name="first_name" value={editPatientData.first_name || ''} onChange={handleEditPatientChange} required />
+                <label>Last Name:</label>
+                <input type="text" name="last_name" value={editPatientData.last_name || ''} onChange={handleEditPatientChange} required />
                 <label>Date of Birth:</label>
                 <input type="date" name="date_of_birth" value={editPatientData.date_of_birth} onChange={handleEditPatientChange} required />
                 <label>Gender:</label>
@@ -987,18 +1256,24 @@ function DoctorDashboard() {
                           <td>{new Date(visit.visit_date).toLocaleDateString()}</td>
                           <td>{visit.visit_purpose}</td>
                           <td>{visit.treatments.map(t => t.treatment_name).join(", ")}</td>
-                          <td>{visit.diagnosis}</td>
+                          <td>{visit.visit_diagnosis}</td>
                           <td className="actions-column">
                             <button onClick={() => handleEditVisitClick(visit)}>Edit Visit</button>
                             {visit.is_paid ? (
-                              <button onClick={() => generateMedicalAbstract(selectedPatient.patient_id, visit.visit_id)}>Generate Abstract</button>
+                              <button onClick={() => {
+                                console.log("Generate Abstract clicked for Patient ID:", selectedPatient.patient_id, "Visit ID:", visit.visit_id);
+                                generateMedicalAbstract(selectedPatient.patient_id, visit.visit_id);
+                              }}>Generate Abstract</button>
                             ) : (
                               <button disabled title="Payment not completed">Generate Abstract</button>
                             )}
-                            {visit.is_paid ? (
-                              <button onClick={() => handleGenerateBillingSlipForVisit(visit.visit_id)}>Generate Billing Slip</button>
+                            {visit.billing_id ? (
+                              <button onClick={() => {
+                                console.log("Generate Billing Slip clicked for Visit ID:", visit.visit_id, "Billing ID:", visit.billing_id);
+                                handleGenerateBillingSlipForVisit(visit.visit_id);
+                              }}>Generate Billing Slip</button>
                             ) : (
-                              <button disabled title="Payment not completed">Generate Billing Slip</button>
+                              <button disabled title="Billing not generated">Generate Billing Slip</button>
                             )}
                           </td>
                         </tr>
@@ -1036,56 +1311,170 @@ function DoctorDashboard() {
             <div className="form-container">
               <h3>Input Treatment & Diagnosis for Visit ID: {selectedVisitId}</h3>
               <form onSubmit={handleLogTreatmentAndDiagnosis}>
-                <label>Treatment Name:</label>
-                <input 
-                  type="text" 
-                  name="name" 
-                  value={logTreatmentDetails.name || ''} 
-                  onChange={handleTreatmentChange} 
-                  required 
-                />
-                <label>Cost:</label>
-                <input 
-                  type="number" 
-                  name="cost" 
-                  value={logTreatmentDetails.cost || ''} 
-                  onChange={handleTreatmentChange} 
-                  required 
-                />
-                <label>Description:</label>
-                <input 
-                  type="text" 
-                  name="description" 
-                  value={logTreatmentDetails.description || ''} 
-                  onChange={handleTreatmentChange} 
-                />
-                <label>Diagnosis:</label>
-                <input 
-                  type="text" 
-                  name="diagnosis" 
-                  value={newDiagnosis || ''} 
-                  onChange={(e) => setNewDiagnosis(e.target.value)} 
-                  required 
-                />
-                <div className="form-actions">
-                  <button type="submit" disabled={loading}>
-                    {loading ? "Submitting..." : "Add Treatment & Diagnosis"}
-                  </button>
-                </div>
+                <Grid container spacing={2}>
+                  <Grid item xs={12}>
+                    <TextField
+                      label="Treatment Name"
+                      name="name"
+                      value={currentTreatmentInput.name || ''}
+                      onChange={handleTreatmentChange}
+                      fullWidth
+                      margin="normal"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mt: 2, width: 'fit-content' }}>
+                      <IconButton onClick={handleDecrementQuantity} size="small" sx={{ p: 0.5 }}>
+                        <RemoveIcon fontSize="small" />
+                      </IconButton>
+                      <TextField
+                        label="Quantity"
+                        name="quantity"
+                        type="number"
+                        value={currentTreatmentInput.quantity}
+                        onChange={handleTreatmentChange}
+                        size="small"
+                        variant="standard"
+                        InputProps={{
+                          disableUnderline: true,
+                          inputProps: { min: 1, style: { textAlign: 'center', padding: '8px 0' } },
+                        }}
+                        sx={{ mx: 0.5, width: '40px' }}
+                      />
+                      <IconButton onClick={handleIncrementQuantity} size="small" sx={{ p: 0.5 }}>
+                        <AddIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      label="Cost"
+                      name="cost"
+                      type="number"
+                      value={currentTreatmentInput.cost}
+                      onChange={handleTreatmentChange}
+                      fullWidth
+                      margin="normal"
+                      size="small"
+                      InputProps={{
+                        readOnly: true,
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      label="Subtotal"
+                      name="subtotal"
+                      type="number"
+                      value={currentTreatmentInput.subtotal}
+                      fullWidth
+                      margin="normal"
+                      size="small"
+                      InputProps={{
+                        readOnly: true,
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      label="Description"
+                      name="description"
+                      value={currentTreatmentInput.description}
+                      onChange={handleTreatmentChange}
+                      fullWidth
+                      margin="normal"
+                      multiline
+                      rows={2}
+                      size="small"
+                      InputProps={{
+                        readOnly: true,
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      label="Diagnosis"
+                      name="diagnosis"
+                      value={newDiagnosis}
+                      onChange={(e) => setNewDiagnosis(e.target.value)}
+                      fullWidth
+                      margin="normal"
+                      required
+                    />
+                  </Grid>
+                  <Grid item xs={12} sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+                    <Button
+                      variant="contained"
+                      color="secondary"
+                      onClick={handleAddTreatmentToList}
+                      sx={{ mr: 1 }}
+                      type="button"
+                    >
+                      Add to List
+                    </Button>
+                    <Button
+                      type="submit"
+                      variant="contained"
+                      color="primary"
+                    >
+                      Add Treatment & Diagnosis
+                    </Button>
+                  </Grid>
+                </Grid>
               </form>
+
+              {addedTreatments.length > 0 && (
+                <Box sx={{ mt: 4 }}>
+                  <h3>Treatments to be logged:</h3>
+                  <TableContainer component={Paper}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Name</TableCell>
+                          <TableCell>Cost</TableCell>
+                          <TableCell>Quantity</TableCell>
+                          <TableCell>Subtotal</TableCell>
+                          <TableCell>Actions</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {addedTreatments.map((treatment, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{treatment.name}</TableCell>
+                            <TableCell>{treatment.cost}</TableCell>
+                            <TableCell>{treatment.quantity}</TableCell>
+                            <TableCell>{treatment.subtotal}</TableCell>
+                            <TableCell>
+                              <Button
+                                variant="outlined"
+                                color="error"
+                                size="small"
+                                onClick={() => handleRemoveTreatment(index)}
+                              >
+                                Remove
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Box>
+              )}
             </div>
           )}
 
           {showBillingSlip && selectedPatient && (
             <div className="billing-slip-preview">
-              <h3>Billing Slip Preview for {selectedPatient.full_name}</h3>
+              <h3>Billing Slip</h3>
               {billingSlipData ? (
                 <div className="abstract-content">
                   <p><strong>Billing ID:</strong> {billingSlipData.billing_id}</p>
-                  <p><strong>Visit ID:</strong> {billingSlipData.visit_id}</p>
+                  <p><strong>Patient ID:</strong> {billingSlipData.patient_id}</p>
                   <p><strong>Patient Name:</strong> {billingSlipData.patient_name}</p>
-                  <p><strong>Visit Purpose:</strong> {billingSlipData.visit_purpose}</p>
-                  <p><strong>Visit Date:</strong> {new Date(billingSlipData.visit_date).toLocaleDateString()}</p>
+                  <p><strong>Visit ID:</strong> {billingSlipData.visit_id}</p>
+                  <p><strong>Doctor:</strong> {billingSlipData.doctor_name || 'N/A'}</p>
+                  <p><strong>Date:</strong> {new Date(billingSlipData.visit_date).toLocaleDateString()}</p>
                 </div>
               ) : (
                 <p>No billing slip data available. Please generate one.</p>
@@ -1104,7 +1493,7 @@ function DoctorDashboard() {
                 <div className="abstract-content">
                   <p><strong>Patient Name:</strong> {medicalAbstractData.patient_name}</p>
                   <p><strong>Patient ID:</strong> {medicalAbstractData.patient_id}</p>
-                  <p><strong>Age:</strong> {medicalAbstractData.age}</p>
+                  <p><strong>Date of Birth:</strong> {medicalAbstractData.date_of_birth ? new Date(medicalAbstractData.date_of_birth).toLocaleDateString() : 'N/A'}</p>
                   <p><strong>Gender:</strong> {medicalAbstractData.gender}</p>
                   <p><strong>Visit Date:</strong> {new Date(medicalAbstractData.visit_date).toLocaleDateString()}</p>
                   <p><strong>Visit Purpose:</strong> {medicalAbstractData.visit_purpose}</p>
@@ -1180,8 +1569,8 @@ function DoctorDashboard() {
                     <tr key={treatment.treatment_id}>
                       <td>{treatment.treatment_id}</td>
                       <td>{treatment.treatment_name}</td>
-                      <td>{treatment.price}</td>
-                      <td>{treatment.purpose}</td>
+                      <td>{treatment.cost}</td>
+                      <td>{treatment.treatment_description}</td>
                       <td className="actions-column">
                         <button onClick={() => handleEditClick(treatment)}>Edit</button>
                       </td>
@@ -1203,7 +1592,7 @@ function DoctorDashboard() {
                 <label>Treatment Name:</label>
                 <input type="text" name="treatment_name" value={editingTreatment.treatment_name} onChange={handleEditTreatmentChange} required />
                 <label>Price:</label>
-                <input type="number" name="price" value={editingTreatment.price} onChange={handleEditTreatmentChange} required />
+                <input type="number" name="cost" value={editingTreatment.cost} onChange={handleEditTreatmentChange} required />
                 <label>Purpose:</label>
                 <input type="text" name="purpose" value={editingTreatment.purpose} onChange={handleEditTreatmentChange} />
                 <div className="form-actions">
@@ -1331,7 +1720,7 @@ function DoctorDashboard() {
                           .map(treatment => (
                             <div key={treatment.treatment_id} className="treatment-item">
                               <p><strong>{treatment.treatment_name}</strong></p>
-                              <p>Cost: {treatment.price}</p>
+                              <p>Cost: {treatment.cost}</p>
                               <p>Purpose: {treatment.purpose}</p>
                             </div>
                           ))}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import {
-  Typography, Button, Box, Paper, TextField, Grid, MenuItem, IconButton, Select
+  Typography, Button, Box, Paper, TextField, Grid, MenuItem, IconButton, Select, TableCell, TableRow, TableContainer, Table, TableBody, TableHead
 } from "@mui/material";
 import SearchIcon from '@mui/icons-material/Search';
 import { useNavigate } from "react-router-dom";
@@ -39,10 +39,11 @@ const NurseDashboard = () => {
   const [filteredPatients, setFilteredPatients] = useState([]);
   const [search, setSearch] = useState("");
   const [formData, setFormData] = useState({
-    full_name: "",
+    pfirst_name: "",
+    plast_name: "",
     dob: "",
     gender: "",
-    contact_no: "",
+    pcontact_info: "",
     philhealth_id: "",
     guardian_name: "",
     guardian_contact: "",
@@ -104,65 +105,87 @@ const NurseDashboard = () => {
       setPatients(res.data);
     } catch (error) {
       alert("Error fetching patients: " + (error.response?.data?.message || error.message));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const fetchDoctors = async () => {
     try {
       const res = await axios.get("http://localhost:5000/api/doctors", getAuthHeaders());
       setDoctors(res.data);
-    } catch {
+      console.log("Fetched doctors:", res.data); // Log fetched doctors
+    } catch (error) {
+      console.error("Error fetching doctors:", error);
       setDoctors([]);
     }
   };
 
   const applyFilter = (type) => {
     setFilterType(type);
-    const now = new Date();
-    let startDate;
-    switch (type) {
-      case 'weekly':
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-        break;
-      case 'monthly':
-        startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
-        break;
-      case 'yearly':
-        startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-        break;
-      default:
-        startDate = null;
-    }
-    let filtered = patients;
-    if (startDate) {
-      filtered = filtered.filter(p => new Date(p.date_registered) >= startDate);
-    }
+    let currentFilteredPatients = patients;
+
     if (search.trim()) {
-      filtered = filtered.filter(p =>
+      // If there's a search term, filter by name/ID on ALL patients
+      currentFilteredPatients = currentFilteredPatients.filter(p =>
         p.full_name?.toLowerCase().includes(search.toLowerCase()) ||
         p.patient_id?.toString().includes(search.toLowerCase())
       );
+    } else {
+      // If no search term, apply date filter
+      const now = new Date();
+      let startDate;
+      switch (type) {
+        case 'weekly':
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+          break;
+        case 'monthly':
+          startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+          break;
+        case 'yearly':
+          startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+          break;
+        default:
+          startDate = null;
+      }
+      if (startDate) {
+        currentFilteredPatients = currentFilteredPatients.filter(p => new Date(p.date_registered) >= startDate);
+      }
     }
-    setFilteredPatients(filtered);
+    setFilteredPatients(currentFilteredPatients);
   };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
   };
 
   const handleAddPatient = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post("http://localhost:5000/api/patients", formData, getAuthHeaders());
+      const res = await axios.post("http://localhost:5000/api/patients", {
+        pfirst_name: formData.pfirst_name,
+        plast_name: formData.plast_name,
+        dob: formData.dob,
+        gender: formData.gender,
+        pcontact_info: formData.pcontact_info,
+        philhealth_id: formData.philhealth_id,
+        guardian_name: formData.guardian_name,
+        guardian_contact: formData.guardian_contact,
+        address: formData.address,
+      }, getAuthHeaders());
       alert("Patient registered successfully!");
-      setSelectedPatient({ ...formData, patient_id: res.data.patient_id });
+      // Assuming the backend returns full_name, first_name, and last_name for the newly created patient
+      setSelectedPatient({ ...res.data, full_name: `${formData.pfirst_name} ${formData.plast_name}`.trim() });
       setFormData({
-        full_name: "",
+        pfirst_name: "",
+        plast_name: "",
         dob: "",
         gender: "",
-        contact_no: "",
+        pcontact_info: "",
         philhealth_id: "",
         guardian_name: "",
         guardian_contact: "",
@@ -212,6 +235,8 @@ const NurseDashboard = () => {
     setVisitLogLoading(true);
     try {
       const nurseId = localStorage.getItem("relatedId");
+      console.log("Nurse ID (registered_by) from localStorage:", nurseId); // Debug log
+
       await axios.post("http://localhost:5000/api/visits", {
         patient_id: selectedPatient.patient_id,
         registered_by: nurseId,
@@ -224,69 +249,74 @@ const NurseDashboard = () => {
       fetchPatientVisits(selectedPatient.patient_id);
     } catch (error) {
       alert("Error logging visit: " + (error.response?.data?.message || error.message));
+    } finally {
+      setVisitLogLoading(false);
     }
-    setVisitLogLoading(false);
   };
 
   const fetchPatientVisits = async (patientId) => {
     try {
       const res = await axios.get(`http://localhost:5000/api/visits/${patientId}`, getAuthHeaders());
+      console.log("Fetched patient visits:", res.data);
       setPatientVisits(res.data);
     } catch (error) {
       setPatientVisits([]);
+      console.error("Error fetching patient visits:", error);
     }
   };
 
   const handleEditPatient = () => {
     setIsEditing(true);
-    setEditPatientData({ ...selectedPatient, dob: formatDateForInput(selectedPatient.dob) });
+    // Split the full name into first and last name for editing
+    const nameParts = (selectedPatient.full_name || '').split(' ');
+    const firstName = nameParts.slice(0, -1).join(' ');
+    const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
+
+    setEditPatientData({
+      ...selectedPatient,
+      dob: formatDateForInput(selectedPatient.dob),
+      first_name: firstName,
+      last_name: lastName,
+    });
   };
 
   const handleEditInputChange = (e) => {
     const { name, value } = e.target;
-    setEditPatientData((prev) => ({ ...prev, [name]: value }));
+    setEditPatientData((prev) => ({
+      ...prev, [name]: value,
+    }));
   };
 
   const handleSavePatient = async () => {
-    console.log("Saving patient data:", editPatientData);
+    if (!editPatientData) return;
     try {
-      await axios.put(`http://localhost:5000/api/patients/${editPatientData.patient_id}`, editPatientData, getAuthHeaders());
-      alert('Patient updated successfully!');
+      const patientId = editPatientData.patient_id;
+      await axios.put(
+        `http://localhost:5000/api/patients/${patientId}`,
+        {
+          pfirst_name: editPatientData.first_name,
+          plast_name: editPatientData.last_name,
+          dob: editPatientData.dob,
+          gender: editPatientData.gender,
+          pcontact_info: editPatientData.pcontact_info,
+          philhealth_id: editPatientData.philhealth_id,
+          guardian_name: editPatientData.guardian_name,
+          guardian_contact: editPatientData.guardian_contact,
+          address: editPatientData.address,
+        },
+        getAuthHeaders()
+      );
+      alert("Patient updated successfully!");
       setIsEditing(false);
-      setSelectedPatient(editPatientData);
+      setSelectedPatient({ ...editPatientData, full_name: `${editPatientData.first_name} ${editPatientData.last_name}`.trim() });
       fetchPatients();
     } catch (error) {
-      alert('Error updating patient: ' + (error.response?.data?.message || error.message));
+      alert("Error updating patient: " + (error.response?.data?.message || error.message));
     }
   };
 
   const getDisplayedPatients = () => {
-    let filtered = patients;
-    const now = new Date();
-    let startDate = null;
-    switch (filterType) {
-      case 'weekly':
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-        break;
-      case 'monthly':
-        startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
-        break;
-      case 'yearly':
-        startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-        break;
-      default:
-        startDate = null;
-    }
-    if (startDate) {
-      filtered = filtered.filter(p => new Date(p.date_registered) >= startDate);
-    }
-    if (search.trim()) {
-      filtered = filtered.filter(p =>
-        p.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-        p.patient_id?.toString().includes(search.toLowerCase())
-      );
-    }
-    return filtered;
+    return filteredPatients;
   };
 
   const navigationTabs = [
@@ -302,8 +332,7 @@ const NurseDashboard = () => {
 
   const handleNavAddPatient = () => {
     setActiveTab('addPatient');
-    setSelectedPatient(null); // Clear selected patient when navigating to Add Patient
-    setIsEditing(false); // Ensure not in edit mode
+    setSelectedPatient(null);
   };
 
   const handleLogout = () => {
@@ -315,144 +344,401 @@ const NurseDashboard = () => {
 
   const renderPatientDetails = () => (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h6" gutterBottom>{selectedPatient?.full_name}</Typography>
-      {isEditing ? (
-        <Box component="form" onSubmit={handleSavePatient} sx={{ mt: 2 }}>
+      {selectedPatient ? (
+        <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
+          <Typography variant="h6" gutterBottom>Patient Details</Typography>
           <Grid container spacing={2}>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body1"><strong>Patient ID:</strong> {selectedPatient.patient_id}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body1"><strong>Full Name:</strong> {selectedPatient.full_name}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body1"><strong>Date of Birth:</strong> {formatDateDisplay(selectedPatient.dob)}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body1"><strong>Gender:</strong> {selectedPatient.gender}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body1"><strong>Contact Info:</strong> {selectedPatient.pcontact_info}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body1"><strong>PhilHealth ID:</strong> {selectedPatient.philhealth_id || 'N/A'}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body1"><strong>Guardian Name:</strong> {selectedPatient.guardian_name || 'N/A'}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body1"><strong>Guardian Contact:</strong> {selectedPatient.guardian_contact || 'N/A'}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={12}>
+              <Typography variant="body1"><strong>Address:</strong> {selectedPatient.address || 'N/A'}</Typography>
+            </Grid>
+            <Grid item xs={12}>
+              <Button variant="contained" onClick={handleEditPatient} sx={{ mr: 2 }}>
+                Edit Patient
+              </Button>
+              <Button variant="contained" onClick={() => setActiveTab('record')}>
+                Log Visit/View Medical History
+              </Button>
+            </Grid>
+          </Grid>
+        </Paper>
+      ) : (
+        <Typography>Select a patient to view details.</Typography>
+      )}
+
+      {isEditing && selectedPatient && (
+        <Paper elevation={3} sx={{ p: 3, mt: 3 }}>
+          <Typography variant="h6" gutterBottom>Edit Patient Information</Typography>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={6}>
               <TextField
-                fullWidth
-                label="Full Name"
-                name="full_name"
-                value={editPatientData?.full_name || ""}
+                label="First Name"
+                name="first_name"
+                value={editPatientData?.first_name || ''}
                 onChange={handleEditInputChange}
-                sx={{ mb: 2 }}
+                fullWidth
+                margin="normal"
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
+                label="Last Name"
+                name="last_name"
+                value={editPatientData?.last_name || ''}
+                onChange={handleEditInputChange}
                 fullWidth
+                margin="normal"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
                 label="Date of Birth"
                 name="dob"
                 type="date"
-                value={editPatientData?.dob || ""}
+                value={editPatientData?.dob || ''}
                 onChange={handleEditInputChange}
+                fullWidth
+                margin="normal"
                 InputLabelProps={{
                   shrink: true,
                 }}
-                sx={{ mb: 2 }}
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
-                fullWidth
+                select
                 label="Gender"
                 name="gender"
-                value={editPatientData?.gender || ""}
+                value={editPatientData?.gender || ''}
                 onChange={handleEditInputChange}
-                sx={{ mb: 2 }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
                 fullWidth
+                margin="normal"
+              >
+                <MenuItem value="male">Male</MenuItem>
+                <MenuItem value="female">Female</MenuItem>
+                <MenuItem value="other">Other</MenuItem>
+              </TextField>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
                 label="Contact No."
-                name="contact_no"
-                value={editPatientData?.contact_no || ""}
+                name="pcontact_info"
+                value={editPatientData?.pcontact_info || ''}
                 onChange={handleEditInputChange}
-                sx={{ mb: 2 }}
+                fullWidth
+                margin="normal"
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
-                fullWidth
-                label="Philhealth ID"
+                label="PhilHealth ID"
                 name="philhealth_id"
-                value={editPatientData?.philhealth_id || ""}
+                value={editPatientData?.philhealth_id || ''}
                 onChange={handleEditInputChange}
-                sx={{ mb: 2 }}
+                fullWidth
+                margin="normal"
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
-                fullWidth
                 label="Guardian Name"
                 name="guardian_name"
-                value={editPatientData?.guardian_name || ""}
+                value={editPatientData?.guardian_name || ''}
                 onChange={handleEditInputChange}
-                sx={{ mb: 2 }}
+                fullWidth
+                margin="normal"
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
-                fullWidth
                 label="Guardian Contact"
                 name="guardian_contact"
-                value={editPatientData?.guardian_contact || ""}
+                value={editPatientData?.guardian_contact || ''}
                 onChange={handleEditInputChange}
-                sx={{ mb: 2 }}
+                fullWidth
+                margin="normal"
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={12}>
               <TextField
-                fullWidth
                 label="Address"
                 name="address"
-                value={editPatientData?.address || ""}
+                value={editPatientData?.address || ''}
                 onChange={handleEditInputChange}
+                fullWidth
+                margin="normal"
                 multiline
-                rows={3}
-                sx={{ mb: 2 }}
+                rows={2}
               />
             </Grid>
+            <Grid item xs={12}>
+              <Button variant="contained" onClick={handleSavePatient} sx={{ mr: 2 }}>
+                Save Changes
+              </Button>
+              <Button variant="outlined" onClick={() => setIsEditing(false)}>
+                Cancel
+              </Button>
+            </Grid>
           </Grid>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-            <Button onClick={() => setIsEditing(false)} variant="outlined" sx={{ mr: 1 }}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="contained">
-              Save
-            </Button>
-          </Box>
-        </Box>
-      ) : (
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={6}>
-            <Typography variant="subtitle1">Patient ID: {selectedPatient?.patient_id}</Typography>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <Typography variant="subtitle1">Date of Birth: {formatDateDisplay(selectedPatient?.dob)}</Typography>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <Typography variant="subtitle1">Gender: {selectedPatient?.gender}</Typography>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <Typography variant="subtitle1">Contact No.: {selectedPatient?.contact_no}</Typography>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <Typography variant="subtitle1">Philhealth ID: {selectedPatient?.philhealth_id}</Typography>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <Typography variant="subtitle1">Guardian Name: {selectedPatient?.guardian_name}</Typography>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <Typography variant="subtitle1">Guardian Contact: {selectedPatient?.guardian_contact}</Typography>
-          </Grid>
-          <Grid item xs={12} md={12}>
-            <Typography variant="subtitle1">Address: {selectedPatient?.address}</Typography>
-          </Grid>
-          <Grid item xs={12}>
-            <Typography variant="subtitle1">Date Registered: {formatDateDisplay(selectedPatient?.date_registered)}</Typography>
-          </Grid>
-          <Grid item xs={12}>
-            <Button onClick={handleEditPatient} variant="contained" sx={{ mt: 2 }}>
-              Edit Patient
-            </Button>
-          </Grid>
-        </Grid>
+        </Paper>
       )}
     </Box>
   );
+
+  const renderAddPatient = () => (
+    <Box sx={{ p: 3 }}>
+      <Typography variant="h6" gutterBottom>Register New Patient</Typography>
+      <Paper elevation={3} sx={{ p: 3 }}>
+        <form onSubmit={handleAddPatient}>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="First Name"
+                name="pfirst_name"
+                value={formData.pfirst_name}
+                onChange={handleInputChange}
+                fullWidth
+                margin="normal"
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Last Name"
+                name="plast_name"
+                value={formData.plast_name}
+                onChange={handleInputChange}
+                fullWidth
+                margin="normal"
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Date of Birth"
+                name="dob"
+                type="date"
+                value={formData.dob}
+                onChange={handleInputChange}
+                fullWidth
+                margin="normal"
+                InputLabelProps={{
+                  shrink: true,
+                }}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                select
+                label="Gender"
+                name="gender"
+                value={formData.gender}
+                onChange={handleInputChange}
+                fullWidth
+                margin="normal"
+                required
+              >
+                <MenuItem value="male">Male</MenuItem>
+                <MenuItem value="female">Female</MenuItem>
+                <MenuItem value="other">Other</MenuItem>
+              </TextField>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Contact No."
+                name="pcontact_info"
+                value={formData.pcontact_info}
+                onChange={handleInputChange}
+                fullWidth
+                margin="normal"
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="PhilHealth ID (Optional)"
+                name="philhealth_id"
+                value={formData.philhealth_id}
+                onChange={handleInputChange}
+                fullWidth
+                margin="normal"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Guardian Name (Optional)"
+                name="guardian_name"
+                value={formData.guardian_name}
+                onChange={handleInputChange}
+                fullWidth
+                margin="normal"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Guardian Contact (Optional)"
+                name="guardian_contact"
+                value={formData.guardian_contact}
+                onChange={handleInputChange}
+                fullWidth
+                margin="normal"
+              />
+            </Grid>
+            <Grid item xs={12} sm={12}>
+              <TextField
+                label="Address"
+                name="address"
+                value={formData.address}
+                onChange={handleInputChange}
+                fullWidth
+                margin="normal"
+                multiline
+                rows={2}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Button type="submit" variant="contained" color="primary">
+                Register Patient
+              </Button>
+            </Grid>
+          </Grid>
+        </form>
+      </Paper>
+    </Box>
+  );
+
+  const renderPatientTable = () => (
+    <Box sx={{ p: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h6">Patient List</Typography>
+        <Box>
+          <Button
+            variant={filterType === 'weekly' ? 'contained' : 'outlined'}
+            onClick={() => applyFilter('weekly')}
+            sx={{ mr: 1 }}
+          >
+            Weekly
+          </Button>
+          <Button
+            variant={filterType === 'monthly' ? 'contained' : 'outlined'}
+            onClick={() => applyFilter('monthly')}
+            sx={{ mr: 1 }}
+          >
+            Monthly
+          </Button>
+          <Button
+            variant={filterType === 'yearly' ? 'contained' : 'outlined'}
+            onClick={() => applyFilter('yearly')}
+          >
+            Yearly
+          </Button>
+        </Box>
+      </Box>
+
+      {loading ? (
+        <Typography>Loading patients...</Typography>
+      ) : (
+        <Paper elevation={3} sx={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={tableHeaderStyle}>Patient ID</th>
+                <th style={tableHeaderStyle}>Full Name</th>
+                <th style={tableHeaderStyle}>Date of Birth</th>
+                <th style={tableHeaderStyle}>Gender</th>
+                <th style={tableHeaderStyle}>Registered On</th>
+                <th style={tableHeaderStyle}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {getDisplayedPatients().length > 0 ? (
+                getDisplayedPatients().map((patient) => (
+                  <TableRow key={patient.patient_id}>
+                    <TableCell sx={tableCellStyle}>{patient.patient_id}</TableCell>
+                    <TableCell sx={tableCellStyle}>{patient.full_name}</TableCell>
+                    <TableCell sx={tableCellStyle}>{patient.dob ? new Date(patient.dob).toLocaleDateString() : 'N/A'}</TableCell>
+                    <TableCell sx={tableCellStyle}>{patient.gender}</TableCell>
+                    <TableCell sx={tableCellStyle}>{formatDateDisplay(patient.date_registered)}</TableCell>
+                    <TableCell sx={tableCellStyle}>
+                      <Button
+                        variant="contained"
+                        onClick={() => handlePatientSelect(patient)}
+                        size="small"
+                      >
+                        Select
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>
+                    No patients found.
+                  </TableCell>
+                </TableRow>
+              )}
+            </tbody>
+          </table>
+        </Paper>
+      )}
+    </Box>
+  );
+
+  const renderRecordTab = () => (
+    <Box sx={{ p: 3 }}>
+      <Button variant="outlined" onClick={() => setActiveTab('viewPatients')} sx={{ mb: 2 }}>
+        Back to Patient List
+      </Button>
+      {selectedPatient ? (
+        <>
+          <Typography variant="h6" gutterBottom>
+            Medical History for {selectedPatient.full_name} (ID: {selectedPatient.patient_id})
+          </Typography>
+          {renderVisitLogging()}
+          {renderVisitHistory()}
+        </>
+      ) : (
+        <Typography>Please select a patient to view/log medical history.</Typography>
+      )}
+    </Box>
+  );
+
+  const tableHeaderStyle = {
+    border: '1px solid #ddd',
+    padding: '8px',
+    background: '#f2f2f2',
+    textAlign: 'left',
+  };
+
+  const tableCellStyle = {
+    border: '1px solid #ddd',
+    padding: '8px',
+    textAlign: 'left',
+  };
 
   const renderVisitLogging = () => (
     <Box sx={{ p: 3, background: "#fff", borderRadius: 2, boxShadow: 1 }}>
@@ -479,7 +765,7 @@ const NurseDashboard = () => {
             <MenuItem value="">Select Doctor</MenuItem>
             {doctors.map((doctor) => (
               <MenuItem key={doctor.staff_id} value={doctor.staff_id}>
-                {doctor.full_name}
+                {`Dr. ${doctor.sfirst_name || ''} ${doctor.slast_name || ''}`.trim()}
               </MenuItem>
             ))}
           </Select>
@@ -494,138 +780,91 @@ const NurseDashboard = () => {
   );
 
   const renderVisitHistory = () => (
-    <Box sx={{ p: 3, background: "#fff", borderRadius: 2, boxShadow: 1 }}>
-      <Typography variant="h6" gutterBottom>Visit History</Typography>
+    <Box sx={{ mt: 4 }}>
+      <Typography variant="h6" gutterBottom>
+        Visit History
+      </Typography>
       {patientVisits.length > 0 ? (
-        <Box>
-          <Grid container spacing={2} className="table-header">
-            <Grid item xs={3}><Typography variant="subtitle2">Visit ID</Typography></Grid>
-            <Grid item xs={3}><Typography variant="subtitle2">Date</Typography></Grid>
-            <Grid item xs={3}><Typography variant="subtitle2">Purpose</Typography></Grid>
-            <Grid item xs={3}><Typography variant="subtitle2">Attended by</Typography></Grid>
-          </Grid>
-          {patientVisits.map((visit) => (
-            <Grid container spacing={2} key={visit.visit_id} className="table-row">
-              <Grid item xs={3}><Typography>{visit.visit_id}</Typography></Grid>
-              <Grid item xs={3}><Typography>{new Date(visit.visit_date).toLocaleDateString()}</Typography></Grid>
-              <Grid item xs={3}><Typography>{visit.visit_purpose}</Typography></Grid>
-              <Grid item xs={3}><Typography>{visit.registered_by_full_name}</Typography></Grid>
-            </Grid>
-          ))}
-        </Box>
+        <TableContainer component={Paper} sx={{ mt: 2 }}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell sx={tableHeaderStyle}>Visit ID</TableCell>
+                <TableCell sx={tableHeaderStyle}>Date</TableCell>
+                <TableCell sx={tableHeaderStyle}>Purpose</TableCell>
+                <TableCell sx={tableHeaderStyle}>Attending Doctor</TableCell>
+                <TableCell sx={tableHeaderStyle}>Registered By</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {patientVisits.map((visit) => (
+                <TableRow key={visit.visit_id}>
+                  <TableCell sx={tableCellStyle}>{visit.visit_id}</TableCell>
+                  <TableCell sx={tableCellStyle}>{new Date(visit.visit_date).toLocaleDateString()}</TableCell>
+                  <TableCell sx={tableCellStyle}>{visit.visit_purpose}</TableCell>
+                  <TableCell sx={tableCellStyle}>{visit.doctor_name}</TableCell>
+                  <TableCell sx={tableCellStyle}>{visit.registered_by_full_name}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
       ) : (
-        <Typography>No visit history found.</Typography>
+        <Typography>No visit history found for this patient.</Typography>
       )}
     </Box>
   );
 
   return (
     <DashboardLayout
-      title="NURSE DASHBOARD"
-      navigationTabs={navigationTabs}
-      currentTab={activeTab}
-      onTabChange={setActiveTab}
-      showSearchBar={true}
-      onSearch={setSearch}
-      searchPlaceholder="Search patients by name or ID"
+      title="Nurse Dashboard"
+      username={localStorage.getItem("username")}
+      role={localStorage.getItem("role")}
       onLogout={handleLogout}
-      onSearchButtonClick={handleSearch}
     >
-      {/* View Patients */}
-      {activeTab === 'viewPatients' && (
-        <Box sx={{ p: 3, background: "#fff", borderRadius: 2, boxShadow: 1 }}>
-          <Typography variant="h6" gutterBottom>Patient List</Typography>
-          <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
-            <Button variant={filterType === 'weekly' ? 'contained' : 'outlined'} onClick={() => applyFilter('weekly')}>WEEKLY</Button>
-            <Button variant={filterType === 'monthly' ? 'contained' : 'outlined'} onClick={() => applyFilter('monthly')}>MONTHLY</Button>
-            <Button variant={filterType === 'yearly' ? 'contained' : 'outlined'} onClick={() => applyFilter('yearly')}>YEARLY</Button>
+      <Box sx={{ width: '100%' }}>
+        <Box sx={{ borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 2 }}>
+          <Box>
+            <Button
+              variant={activeTab === 'viewPatients' ? 'contained' : 'outlined'}
+              onClick={() => setActiveTab('viewPatients')}
+              sx={{ mr: 1 }}
+            >
+              View Patients
+            </Button>
+            <Button
+              variant={activeTab === 'addPatient' ? 'contained' : 'outlined'}
+              onClick={handleNavAddPatient}
+            >
+              Add Patient
+            </Button>
           </Box>
-          {loading ? (
-            <Typography>Loading patients...</Typography>
-          ) : (
-            <Box sx={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
-                <thead>
-                  <tr style={{ background: "#f0f0f0" }}>
-                    <th style={{ padding: "8px", border: "1px solid #ddd", textAlign: "left", width: "10%" }}>Patient ID</th>
-                    <th style={{ padding: "8px", border: "1px solid #ddd", textAlign: "left", width: "30%" }}>Full Name</th>
-                    <th style={{ padding: "8px", border: "1px solid #ddd", textAlign: "left", width: "20%" }}>Date of Birth</th>
-                    <th style={{ padding: "8px", border: "1px solid #ddd", textAlign: "left", width: "15%" }}>Gender</th>
-                    <th style={{ padding: "8px", border: "1px solid #ddd", textAlign: "left", width: "25%" }}>Registered On</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredPatients.length > 0 ? (
-                    filteredPatients.map((p) => (
-                      <tr key={p.patient_id} onClick={() => handlePatientSelect(p)} style={{ cursor: "pointer", '&:hover': { background: "#e0e0e0" } }}>
-                        <td style={{ padding: "8px", border: "1px solid #ddd" }}>{p.patient_id}</td>
-                        <td style={{ padding: "8px", border: "1px solid #ddd" }}>{p.full_name}</td>
-                        <td style={{ padding: "8px", border: "1px solid #ddd" }}>{formatDateDisplay(p.dob)}</td>
-                        <td style={{ padding: "8px", border: "1px solid #ddd" }}>{p.gender}</td>
-                        <td style={{ padding: "8px", border: "1px solid #ddd" }}>{formatDateDisplay(p.date_registered)}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={5} style={{ padding: "8px", textAlign: "center" }}>No patients found.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </Box>
-          )}
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <TextField
+              label="Search patients by name or ID"
+              variant="outlined"
+              size="small"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              sx={{ mr: 1 }}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  handleSearch();
+                }
+              }}
+            />
+            <IconButton onClick={handleSearch} color="primary">
+              <SearchIcon />
+            </IconButton>
+          </Box>
         </Box>
-      )}
 
-      {/* Add Patient Form */}
-      {activeTab === 'addPatient' && (
-        <Box sx={{ p: 3, background: "#fff", borderRadius: 2, boxShadow: 1 }}>
-          <Typography variant="h6" gutterBottom>Register New Patient</Typography>
-          <Grid container spacing={2} component="form" onSubmit={handleAddPatient}>
-            <Grid item xs={12} sm={6}>
-              <TextField label="Full Name" name="full_name" value={formData.full_name} onChange={handleInputChange} fullWidth required />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField label="Date of Birth" name="dob" type="date" value={formData.dob} onChange={handleInputChange} fullWidth InputLabelProps={{ shrink: true }} required />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField select label="Gender" name="gender" value={formData.gender} onChange={handleInputChange} fullWidth required>
-                <MenuItem value="Male">Male</MenuItem>
-                <MenuItem value="Female">Female</MenuItem>
-                <MenuItem value="Other">Other</MenuItem>
-              </TextField>
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField label="Contact No." name="contact_no" value={formData.contact_no} onChange={handleInputChange} fullWidth />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField label="PhilHealth ID" name="philhealth_id" value={formData.philhealth_id} onChange={handleInputChange} fullWidth />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField label="Address" name="address" value={formData.address} onChange={handleInputChange} fullWidth multiline rows={2} />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField label="Guardian Name" name="guardian_name" value={formData.guardian_name} onChange={handleInputChange} fullWidth />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField label="Guardian Contact" name="guardian_contact" value={formData.guardian_contact} onChange={handleInputChange} fullWidth />
-            </Grid>
-            <Grid item xs={12}>
-              <Button type="submit" variant="contained" color="primary" fullWidth disabled={loading}>
-                {loading ? "Registering..." : "Register Patient"}
-              </Button>
-            </Grid>
-          </Grid>
-        </Box>
-      )}
-
-      {activeTab === "record" && selectedPatient && (
-        <Box className="dashboard-content">
-          {renderPatientDetails()}
-          {renderVisitLogging()}
-          {renderVisitHistory()}
-        </Box>
-      )}
+        {
+          activeTab === 'viewPatients' ? renderPatientTable() :
+            activeTab === 'addPatient' ? renderAddPatient() :
+              activeTab === 'record' ? renderRecordTab() : null
+        }
+      </Box>
     </DashboardLayout>
   );
 };
