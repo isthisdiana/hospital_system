@@ -690,7 +690,13 @@ function DoctorDashboard() {
   };
 
   const handleEditClick = (treatment) => {
-    setEditingTreatment(treatment);
+    // Ensure all fields are present and not undefined
+    setEditingTreatment({
+      treatment_id: treatment.treatment_id,
+      treatment_name: treatment.treatment_name || "",
+      cost: treatment.cost !== undefined && treatment.cost !== null ? treatment.cost : "",
+      treatment_description: treatment.treatment_description || "",
+    });
     setShowEditTreatmentForm(true);
   };
 
@@ -710,9 +716,9 @@ function DoctorDashboard() {
         method: 'PUT',
         headers: getAuthHeaders(),
         body: JSON.stringify({
-          treatment_name: editingTreatment.treatment_name,
-          cost: editingTreatment.price,
-          treatment_description: editingTreatment.purpose
+          treatment_name: editingTreatment.treatment_name || "",
+          cost: editingTreatment.cost || 0,
+          treatment_description: editingTreatment.treatment_description || ""
         }),
       });
       if (!response.ok) {
@@ -736,7 +742,12 @@ function DoctorDashboard() {
   };
 
   const handleEditVisitClick = (visit) => {
-    setEditingVisit(visit);
+    // Ensure the edit form has the correct fields and is always controlled
+    setEditingVisit({
+      ...visit,
+      diagnosis: visit.diagnosis || visit.visit_diagnosis || "",
+      visit_purpose: visit.visit_purpose || "",
+    });
     setShowEditVisitForm(true);
   };
 
@@ -749,10 +760,16 @@ function DoctorDashboard() {
     setLoading(true);
     setError(null);
     try {
+      // Map diagnosis to visit_diagnosis for backend
+      const payload = {
+        ...editingVisit,
+        visit_diagnosis: editingVisit.diagnosis || "",
+      };
+      delete payload.diagnosis;
       const response = await fetch(`${API_BASE_URL}/visits/${editingVisit.visit_id}`, {
         method: 'PUT',
         headers: getAuthHeaders(),
-        body: JSON.stringify(editingVisit),
+        body: JSON.stringify(payload),
       });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -762,7 +779,6 @@ function DoctorDashboard() {
       setEditingVisit(null);
       fetchPendingTreatmentVisits(); // Refresh list
     } catch (err) {
-      console.error("Error updating visit:", err);
       setError("Error updating visit.");
     } finally {
       setLoading(false);
@@ -1296,9 +1312,9 @@ function DoctorDashboard() {
               <h3>Edit Visit Details</h3>
               <form onSubmit={(e) => { e.preventDefault(); handleUpdateVisit(); }}>
                 <label>Visit Purpose:</label>
-                <input type="text" name="visit_purpose" value={editingVisit.visit_purpose} onChange={handleEditVisitChange} required />
+                <input type="text" name="visit_purpose" value={editingVisit.visit_purpose || ""} onChange={handleEditVisitChange} required />
                 <label>Diagnosis:</label>
-                <input type="text" name="diagnosis" value={editingVisit.diagnosis} onChange={handleEditVisitChange} required />
+                <input type="text" name="diagnosis" value={editingVisit.diagnosis || ""} onChange={handleEditVisitChange} required />
                 <div className="form-actions">
                   <button type="submit">Save Visit Changes</button>
                   <button type="button" onClick={() => setShowEditVisitForm(false)}>Cancel</button>
@@ -1311,8 +1327,8 @@ function DoctorDashboard() {
             <div className="form-container">
               <h3>Input Treatment & Diagnosis for Visit ID: {selectedVisitId}</h3>
               <form onSubmit={handleLogTreatmentAndDiagnosis}>
-                <Grid container spacing={2}>
-                  <Grid item xs={12}>
+                <Grid container columns={12} columnSpacing={2} alignItems="center">
+                  <Grid gridColumn={{ xs: 'span 12', sm: 'span 2' }}>
                     <TextField
                       label="Treatment Name"
                       name="name"
@@ -1320,9 +1336,17 @@ function DoctorDashboard() {
                       onChange={handleTreatmentChange}
                       fullWidth
                       margin="normal"
+                      size ="small"
+                      variant="outlined"
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          '& fieldset': { border: 'none' },
+                        },
+                        backgroundColor: '#fff',
+                      }}
                     />
                   </Grid>
-                  <Grid item xs={12} sm={4}>
+                  <Grid gridColumn={{ xs: 'span 12', sm: 'span 1' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', mt: 2, width: 'fit-content' }}>
                       <IconButton onClick={handleDecrementQuantity} size="small" sx={{ p: 0.5 }}>
                         <RemoveIcon fontSize="small" />
@@ -1336,7 +1360,6 @@ function DoctorDashboard() {
                         size="small"
                         variant="standard"
                         InputProps={{
-                          disableUnderline: true,
                           inputProps: { min: 1, style: { textAlign: 'center', padding: '8px 0' } },
                         }}
                         sx={{ mx: 0.5, width: '40px' }}
@@ -1346,7 +1369,7 @@ function DoctorDashboard() {
                       </IconButton>
                     </Box>
                   </Grid>
-                  <Grid item xs={12} sm={4}>
+                  <Grid gridColumn={{ xs: 'span 12', sm: 'span 2' }}>
                     <TextField
                       label="Cost"
                       name="cost"
@@ -1361,7 +1384,7 @@ function DoctorDashboard() {
                       }}
                     />
                   </Grid>
-                  <Grid item xs={12} sm={4}>
+                  <Grid gridColumn={{ xs: 'span 12', sm: 'span 2' }}>
                     <TextField
                       label="Subtotal"
                       name="subtotal"
@@ -1375,7 +1398,7 @@ function DoctorDashboard() {
                       }}
                     />
                   </Grid>
-                  <Grid item xs={12}>
+                  <Grid gridColumn={{ xs: 'span 12', sm: 'span 2' }}>
                     <TextField
                       label="Description"
                       name="description"
@@ -1386,12 +1409,19 @@ function DoctorDashboard() {
                       multiline
                       rows={2}
                       size="small"
+                      variant="outlined"
                       InputProps={{
                         readOnly: true,
                       }}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          '& fieldset': { border: 'none' },
+                        },
+                        backgroundColor: '#fff',
+                      }}
                     />
                   </Grid>
-                  <Grid item xs={12}>
+                  <Grid gridColumn={{ xs: 'span 12', sm: 'span 2' }}>
                     <TextField
                       label="Diagnosis"
                       name="diagnosis"
@@ -1399,7 +1429,14 @@ function DoctorDashboard() {
                       onChange={(e) => setNewDiagnosis(e.target.value)}
                       fullWidth
                       margin="normal"
+                      variant="outlined"
                       required
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          '& fieldset': { border: 'none' },
+                        },
+                        backgroundColor: '#fff',
+                      }}
                     />
                   </Grid>
                   <Grid item xs={12} sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
@@ -1590,11 +1627,11 @@ function DoctorDashboard() {
               <h3>Edit Treatment: {editingTreatment.treatment_name}</h3>
               <form onSubmit={(e) => { e.preventDefault(); handleUpdateTreatment(); }}>
                 <label>Treatment Name:</label>
-                <input type="text" name="treatment_name" value={editingTreatment.treatment_name} onChange={handleEditTreatmentChange} required />
+                <input type="text" name="treatment_name" value={editingTreatment.treatment_name || ""} onChange={handleEditTreatmentChange} required />
                 <label>Price:</label>
-                <input type="number" name="cost" value={editingTreatment.cost} onChange={handleEditTreatmentChange} required />
+                <input type="number" name="cost" value={editingTreatment.cost || ""} onChange={handleEditTreatmentChange} required />
                 <label>Purpose:</label>
-                <input type="text" name="purpose" value={editingTreatment.purpose} onChange={handleEditTreatmentChange} />
+                <input type="text" name="treatment_description" value={editingTreatment.treatment_description || ""} onChange={handleEditTreatmentChange} />
                 <div className="form-actions">
                   <button type="submit">Save Changes</button>
                   <button type="button" onClick={() => setShowEditTreatmentForm(false)}>Cancel</button>

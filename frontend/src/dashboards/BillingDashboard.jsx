@@ -10,50 +10,6 @@ import { jwtDecode } from "jwt-decode";
 
 const API_BASE_URL = "http://localhost:5000/api";
 
-const mockBillingData = {
-  "BILL-123456": {
-    billing_id: "BILL-123456",
-    patient_id: "P001",
-    patient_name: "John Doe",
-    date: "2024-03-20",
-    doctor_id: "DOC-001",
-    doctor_name: "Dr. Smith",
-    philhealth_id: "PH123456",
-    treatments: [
-      { id: 1, name: "Blood Pressure Check", price: 50, quantity: 1 },
-      { id: 2, name: "X-Ray", price: 200, quantity: 1 },
-    ],
-    total_amount: 250,
-    discount_amount: 0,
-    final_amount: 250,
-    payment_status: "Unpaid",
-    payment_method: "",
-  },
-};
-
-const mockUnpaidBills = [
-  {
-    billing_id: "BILL-123456",
-    patient_name: "John Doe",
-    visit_id: "V001",
-    philhealth_id: "PH123456",
-    total_amount: 250,
-  },
-  {
-    billing_id: "BILL-789012",
-    patient_name: "Jane Smith",
-    visit_id: "V002",
-    philhealth_id: "0",
-    total_amount: 1500,
-  },
-  {
-    billing_id: "BILL-345678",
-    patient_name: "Peter Jones",
-    visit_id: "V003",
-    philhealth_id: "PH987654",
-    total_amount: 6000,
-  },
-];
 
 function BillingDashboard() {
   const navigate = useNavigate();
@@ -147,22 +103,15 @@ function BillingDashboard() {
     setError(null);
     try {
       const token = localStorage.getItem("token");
-      const response = await axios.get(`${API_BASE_URL}/billing/reports`, {
+      const response = await axios.get("http://localhost:5000/api/billing/reports", {
         headers: {
           Authorization: `Bearer ${token}`,
-        },
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache"
+        }
       });
-      setBillingReports({
-        totalPatients: response.data.totalPatients || 0,
-        totalVisits: response.data.totalVisits || 0,
-        totalBills: response.data.totalBills || 0,
-        totalTreatments: response.data.totalTreatments || 0,
-        totalAmountCollected: response.data.totalAmountCollected || 0,
-        averageBillAmount: response.data.averageBillAmount || 0,
-        commonTreatments: response.data.commonTreatments || [],
-      });
+      setBillingReports(response.data);
     } catch (error) {
-      console.error("Error fetching billing reports:", error);
       setError("Failed to load billing reports.");
     } finally {
       setLoading(false);
@@ -174,22 +123,17 @@ function BillingDashboard() {
   }, []);
 
   useEffect(() => {
-    let intervalId;
-    if (mainSection === "billingReports") {
-      fetchBillingReports(); // Initial fetch
-      intervalId = setInterval(fetchBillingReports, 60000); // Auto-update every 60 seconds
-    } else if (mainSection === "billingHistory") {
-      fetchBillingHistory();
-    } else if (mainSection === "availableTreatments") {
-      fetchAvailableTreatments();
-    }
+    // Fetch immediately on mount
+    fetchBillingReports();
 
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-    };
-  }, [mainSection]);
+    // Set up interval for auto-refresh
+    const intervalId = setInterval(() => {
+      fetchBillingReports();
+    }, 60000); // 60 seconds
+
+    // Clean up interval on unmount
+    return () => clearInterval(intervalId);
+  }, []);
 
   const handleSelectUnpaidBill = async (billingId) => {
     setLoading(true);
@@ -680,7 +624,7 @@ function BillingDashboard() {
                     <th>Final Amount</th>
                     <th>Payment Method</th>
                     <th>Billing Staff</th>
-                    <th>Actions</th>
+                    {/* <th>Actions</th> */}
                   </tr>
                 </thead>
                 <tbody>
@@ -699,13 +643,13 @@ function BillingDashboard() {
                       <td>{bill.final_amount}</td>
                       <td>{bill.payment_method || 'N/A'}</td>
                       <td>{bill.billing_staff_name || 'N/A'}</td>
-                      <td>
+                      {/* <td>
                         {bill.is_paid && (
                           <button onClick={() => generateMedicalAbstract(bill.patient_id, bill.visit_id)}>
                             Generate Abstract
                           </button>
                         )}
-                      </td>
+                      </td> */}
                     </tr>
                   ))}
                 </tbody>

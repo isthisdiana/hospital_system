@@ -288,7 +288,7 @@ function AdminDashboard() {
             <div style={{ textAlign: "left", fontSize: 16 }}>
               <div style={{ marginBottom: 12 }}><b>Total Patients:</b> {reportData.totalPatients}</div>
               <div style={{ marginBottom: 12 }}><b>Total Visits:</b> {reportData.totalVisits}</div>
-              <div style={{ marginBottom: 12 }}><b>Total Bills:</b> {reportData.totalBills}</div>
+              {/* <div style={{ marginBottom: 12 }}><b>Total Bills:</b> {reportData.totalBills}</div> */}
               <div style={{ marginBottom: 12 }}><b>Total Treatments:</b> {reportData.totalTreatments}</div>
               <div style={{ marginBottom: 12 }}><b>Total Amount Collected:</b> {reportData.totalAmountCollected.toFixed(2)}</div>
               <div style={{ marginBottom: 12 }}><b>Average Bill Amount:</b> {reportData.averageBillAmount.toFixed(2)}</div>

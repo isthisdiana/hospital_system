@@ -35,7 +35,6 @@ const authenticateToken = (req, res, next) => {
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.sendStatus(401);
   const jwtSecret = process.env.JWT_SECRET || 'hospital_secret_key';
-  console.log("Using JWT_SECRET:", jwtSecret);
   jwt.verify(token, jwtSecret, (err, user) => {
     if (err) {
       console.error("JWT verification error:", err);
@@ -1473,6 +1472,32 @@ app.get("/api/admin/system-reports", authenticateToken, async (req, res) => {
     if (connection) connection.release();
   }
 });
+
+
+// Update a visit (visit purpose and diagnosis)
+app.put("/api/visits/:visit_id", async (req, res) => {
+  const { visit_id } = req.params;
+  const { visit_purpose, visit_diagnosis } = req.body;
+
+  if (!visit_purpose || !visit_diagnosis) {
+    return res.status(400).json({ message: "Visit purpose and diagnosis are required." });
+  }
+
+  try {
+    const [result] = await db.query(
+      "UPDATE visits SET visit_purpose = ?, diagnosis = ? WHERE visit_id = ?",
+      [visit_purpose, visit_diagnosis, visit_id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Visit not found." });
+    }
+    res.json({ message: "Visit updated successfully." });
+  } catch (err) {
+    console.error("Error updating visit:", err);
+    return res.status(500).json({ message: "Error updating visit." });
+  }
+});
+
 
 // Add more endpoints as needed for your app...
 
